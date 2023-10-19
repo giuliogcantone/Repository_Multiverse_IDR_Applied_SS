@@ -1,0 +1,962 @@
+---
+title: "Code"
+format: html
+editor: visual
+---
+
+```{r setup}
+pacman::p_load(
+  tidyverse,
+  tidymodels,
+  openalexR,
+  specr,
+  readxl,
+  writexl,
+  MatchIt,
+  proxy,
+  rvest,
+  tidytext,
+  grid,
+ggridges,
+  ggExtra,
+  hrbrthemes,
+  heatmaply
+)
+```
+
+## Sampling Frame
+
+```{r}
+concepts = list()
+
+oa_fetch(
+  entity = "concepts",
+  level = c(0:1)
+) -> concepts$ALL
+
+concepts$ALL %>%
+  mutate(i = recode(display_name,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    ),
+         dip = i
+  ) -> concepts$ALL
+
+concepts$ALL %>%
+  filter(level == 0) -> concepts$zero
+
+concepts$ALL %>%
+  filter(level == 1) -> concepts$one
+
+concepts$ALL
+```
+
+### Building Zeds
+
+```{r}
+Z = list()
+```
+
+#### Raw Zed-Zero
+
+```{r}
+concepts$zero %>%
+  select(i,related_concepts) %>%
+  unnest(related_concepts,
+         names_sep = "_") %>%
+  rename(j = related_concepts_display_name) %>%
+    mutate(j = recode(j,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  select(i,j, c = related_concepts_score) -> Z$Raw_0
+
+crossing(i = concepts$zero$dip,
+         j = concepts$zero$dip) %>% as_tibble() %>%
+  arrange(i,j) %>%
+  left_join(Z$Raw_0,
+            by = c("i", "j")) %>%
+  mutate(c = ifelse(i==j,max(c,na.rm = T),c),
+         c = ifelse(is.na(c),0,c)) %>%
+  pivot_wider(names_from = j,
+              values_from = c,
+              values_fill = 0
+              ) %>%
+  select(i, sort(names(.)[-1])) %>%
+  select(-i) %>%
+  as.matrix() -> Z$Raw_0
+
+colnames(Z$Raw_0) -> row.names(Z$Raw_0)
+
+proxy::simil(Z$Raw_0, method = "cosine") %>%
+  as.matrix(diag = 1) -> Z$Raw_0
+
+ggheatmap(Z$Raw_0, hide_colorbar = T)
+```
+
+#### Raw Zed-One
+
+```{r}
+concepts$one %>%
+  select(i,related_concepts) %>%
+  unnest(related_concepts,
+         names_sep = "_") %>%
+  rename(j = related_concepts_display_name) %>%
+  filter(related_concepts_level == 1) %>%
+  select(i,j, c = related_concepts_score) -> Z$Raw_1
+
+crossing(i = concepts$one$dip,
+         j = concepts$one$dip) %>% as_tibble() %>%
+  arrange(i,j) %>%
+  left_join(Z$Raw_1,
+            by = c("i", "j")) %>%
+  mutate(c = ifelse(i==j,max(c,na.rm = T),c),
+         c = ifelse(is.na(c),0,c)) %>%
+  pivot_wider(names_from = j,
+              values_from = c,
+              values_fill = 0
+              ) %>%
+  select(i, sort(names(.)[-1])) %>%
+  select(-i) %>%
+  as.matrix() -> Z$Raw_1
+
+colnames(Z$Raw_1) -> row.names(Z$Raw_1)
+
+proxy::simil(Z$Raw_1, method = "cosine") %>%
+  as.matrix(diag = 1) -> Z$Raw_1
+```
+
+#### Corrected Zed-Zero
+
+```{r}
+concepts$zero %>%
+  select(i,related_concepts) %>%
+  unnest(related_concepts,
+         names_sep = "_") %>%
+  rename(j = related_concepts_display_name) %>%
+    mutate(j = recode(j,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  select(i,j, c = related_concepts_score) %>%
+  mutate(rank_i = rank(c) + (18 - n()),
+         .by = i) %>%
+  mutate(rank_j = rank(c) + (18 - n()),
+         .by = j) %>%
+  mutate(c = rank_i + rank_j) %>%
+  select(-c(rank_i,rank_j)) -> Z$Correct_0
+
+crossing(i = concepts$zero$dip,
+         j = concepts$zero$dip) %>% as_tibble() %>%
+  arrange(i,j) %>%
+  left_join(Z$Correct_0,
+            by = c("i", "j")) %>%
+  mutate(c = ifelse(i==j,38,c),
+         c = ifelse(is.na(c),0,c)) %>%
+  pivot_wider(names_from = j,
+              values_from = c,
+              values_fill = 0
+              ) %>%
+  select(i, sort(names(.)[-1])) %>%
+  select(-i) %>%
+  as.matrix() -> Z$Correct_0
+
+colnames(Z$Correct_0) -> row.names(Z$Correct_0)
+
+proxy::simil(Z$Correct_0, method = "cosine") %>%
+  as.matrix(diag = 1) -> Z$Correct_0
+
+Z$Correct_0 *
+  ((Z$Raw_0 %>% sum() - 19) / (Z$Correct_0 %>% sum() - 19)) -> Z$Correct_0
+diag(Z$Correct_0) <- 1
+
+ggheatmap(Z$Correct_0, hide_colorbar = T)
+```
+
+#### Corrected Zed-One
+
+```{r}
+concepts$one %>%
+  select(i,related_concepts) %>%
+  unnest(related_concepts,
+         names_sep = "_") %>%
+  rename(j = related_concepts_display_name) %>%
+    mutate(j = recode(j,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  select(i,j, c = related_concepts_score) %>%
+  mutate(rank_i = rank(c) + (283 - n()),
+         .by = i) %>%
+  mutate(rank_j = rank(c) + (283 - n()),
+         .by = j) %>%
+  mutate(c = rank_i + rank_j) %>%
+  select(-c(rank_i,rank_j)) -> Z$Correct_1
+
+crossing(i = concepts$one$dip,
+         j = concepts$one$dip) %>% as_tibble() %>%
+  arrange(i,j) %>%
+  left_join(Z$Correct_1,
+            by = c("i", "j")) %>%
+  mutate(c = ifelse(i==j,284*2,c),
+         c = ifelse(is.na(c),0,c)) %>%
+  pivot_wider(names_from = j,
+              values_from = c,
+              values_fill = 0
+              ) %>%
+  select(i, sort(names(.)[-1])) %>%
+  select(-i) %>%
+  as.matrix() -> Z$Correct_1
+
+colnames(Z$Correct_1) -> row.names(Z$Correct_1)
+
+proxy::simil(Z$Correct_1, method = "cosine") %>%
+  as.matrix(diag = 1) -> Z$Correct_1
+
+Z$Correct_1 *
+  ((Z$Raw_1 %>% sum() - 284) / (Z$Correct_1 %>% sum() - 284)) -> Z$Correct_1
+diag(Z$Correct_1) <- 1
+```
+
+#### Naive Zeds
+
+```{r}
+Z$Naive_0 <- diag(1, nrow = nrow(Z$Raw_0), ncol = ncol(Z$Raw_0))
+rownames(Z$Naive_0) <- rownames(Z$Raw_0)
+colnames(Z$Naive_0) <- colnames(Z$Raw_0)
+
+Z$Naive_1 <- diag(1, nrow = nrow(Z$Raw_1), ncol = ncol(Z$Raw_1))
+rownames(Z$Naive_1) <- rownames(Z$Raw_1)
+colnames(Z$Naive_1) <- colnames(Z$Raw_1)
+```
+
+## Journals Identification
+
+```{r}
+journals <- read_excel("ACB.xlsx") %>%
+  filter(`Level 2021` %in% c("4.0","4*")) %>%
+  transmute(ISSN, Title = Title %>% toupper(),ABS=1) %>%
+  full_join(
+    read_excel("Area13B.xlsx") %>%
+  filter_at(vars(-TITOLO), any_vars(. %>% str_detect("A"))) %>%
+  transmute(
+    Title = TITOLO %>% toupper(),
+    ISSN = ISSN %>% str_replace("‐","-"),
+    ANVUR = 1
+  )) %>%
+  mutate(
+    ABS = coalesce(ABS,0),
+    ANVUR = coalesce(ANVUR,0)
+  ) %>%
+  mutate(ANVUR = ifelse(sum(ANVUR > 0),1,0),
+         ABS = ifelse(sum(ABS > 0),1,0),
+         .by = Title) %>%
+  filter(ABS == 1,
+         ANVUR == 1) -> journals
+
+journals %>%
+  count(Title)
+
+```
+
+### Fetch Journal
+
+```{r}
+oa_fetch(
+  entity = "venues",
+  issn = journals %>% pull(ISSN) %>% unique(),
+) %>%
+  transmute(id,
+              Journal = display_name,
+              ISSN = issn,
+              counts_by_year,
+              works_count,
+              x_concepts,
+              works_api_url) %>%
+  unnest(ISSN) %>%
+    left_join(journals %>% select(-Title))  %>%
+  distinct(Journal, .keep_all = T) -> journals
+```
+
+### Fetch Papers
+
+```{r}
+oa_fetch(
+  entity = "works",
+  primary_location.source.id = journals$id,
+  publication_year = c(2013,2015,2017)
+) -> papers_raw
+
+papers <- papers_raw %>%
+  filter(!author %>% is.na(),
+         !publication_date %>% is.na(),
+         !referenced_works %>% is.na(),
+         !doi %>% is.na()) %>%
+  transmute(paper = id,
+           title = display_name,
+           author,
+           Journal = so,
+           publication_date,
+           pub_year = publication_year,
+           issue,
+           counts_by_year,
+           concepts,
+           doi,
+           open_access = any_repository_has_fulltext) %>%
+  arrange(publication_date) %>%
+  distinct(title, .keep_all = T)
+```
+
+### Pooled Journal partitions
+
+```{r}
+papers %>%
+  unnest(concepts) %>%
+    filter(level < 2) %>%
+  select(Journal,paper,pub_year,level,
+         i = display_name,score) %>%
+    mutate(i = recode(i,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  mutate(score = score/sum(score),
+         .by = c(paper,level)) %>%
+  summarise(p = sum(score),
+            .by = c(i,pub_year,Journal,level)) %>%
+  mutate(p = p/sum(p),
+         .by = c(pub_year,Journal,level)) %>%
+  arrange(Journal,pub_year) %>%
+  pivot_wider(
+    names_from = pub_year,
+    values_from = p,
+    names_prefix = "p_",
+    values_fill = 0) %>%
+  complete(i,Journal,
+           fill = list(p_2013 = 0,
+                       p_2015 = 0,
+                       p_2017 = 0)) %>%
+  inner_join(concepts$ALL %>%
+              select(i,level)) %>%
+  left_join(
+    journals %>%
+  select(-id) %>%
+  unnest(x_concepts) %>%
+    filter(level < 2) %>%
+      mutate(i = recode(display_name,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  select(Journal,level,i,
+         pool = score) %>%
+  mutate(pool = pool/sum(pool),
+         .by = c(Journal,level))
+  ) %>%
+      mutate(pool = coalesce(pool,0)) -> journals_profile
+```
+
+#### Lollipops
+
+```{r}
+journals_profile %>%
+  filter(level == 0) %>%
+  summarise(p_2013 = sum(p_2013),
+            p_2015 = sum(p_2015),
+            p_2017 = sum(p_2017),
+            pool = sum(pool),
+            .by = i) %>%
+  mutate(
+    p_2013 = p_2013/sum(p_2013),
+    p_2015 = p_2015/sum(p_2015),
+    p_2017 = p_2017/sum(p_2017),
+         pool = pool/sum(pool)
+         ) %>%
+  filter(p_2013 > .02) %>%
+  ggplot() +
+  geom_segment(aes(x=p_2013, xend=p_2017,
+                   y=i, yend=i), color="#804589") +
+    geom_point(aes(x=pool, y=i,
+                 color = "Pooled"),
+             shape = 15) +
+  geom_point(aes(x=p_2017, y=i,
+             color = "2017")) +
+  geom_point(aes(x=p_2015, y=i,
+             color = "2015")) +
+  geom_point(aes(x=p_2013, y=i,
+                 color = "2013")) +
+    scale_color_manual(
+      values = c("salmon","gold","navy","green"),
+      guide  = guide_legend(),
+      name   = element_blank()
+      ) +
+  theme_test(base_size = 18) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 12),
+            legend.justification = "right",
+        legend.position = c(0.97, 0.88),
+        legend.box.background = element_blank(),
+        legend.key = element_blank(),
+        legend.background = element_blank(),
+        ) +
+  guides(color = guide_legend(keywidth = .1)) +
+  xlab("Semantic shift in 89 prestigious Journals of Business")
+```
+
+## Pre-process
+
+#### N of authors
+
+```{r}
+papers %>%
+  unnest(author) %>%
+  rename(author = au_display_name) %>%
+  filter(!author %>% is.na()) %>%
+  count(title) %>%
+  rename(n_authors = n) %>%
+  right_join(papers) %>%
+  mutate(n_authors_class =
+           case_when(n_authors <= 3 ~ n_authors %>% as.character(),
+                     n_authors > 3 ~ "4+") %>%
+           factor(levels = c("1","2","3","4+"))
+         ) -> papers
+
+papers %>%
+  ggplot() +
+  geom_bar(aes(x = n_authors_class,
+                     y = ..count../sum(..count..)),
+               fill = "navy")
+```
+
+### Diversity
+
+```{r}
+papers %>%
+  select(paper,Journal,concepts) %>%
+  unnest(concepts) %>%
+  filter(level < 2) %>%
+  select(paper,Journal,level,
+         p_o = score,
+         i=display_name) %>%
+  mutate(p_o = p_o/sum(p_o),
+         .by = c(paper, level)) %>%
+  mutate(i = recode(i,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  filter(p_o > 0) -> papers_profiles
+```
+
+```{r}
+papers_profiles %>%
+  filter(level == 0) %>%
+summarize(crossed = list(crossing(i, i)),
+          .by = paper) %>%
+  unnest(crossed) %>%
+  rename(
+    i = i...1,
+    j = i...2
+  ) %>%
+  left_join(papers_profiles %>% transmute(
+      paper,
+      i = i,
+      p_i = p_o
+    )
+  ) %>%
+    left_join(papers_profiles %>% transmute(
+      paper,
+      j = i,
+      p_j = p_o
+    )
+  ) %>%
+  mutate(d_Raw_0 = map2_dbl(i,j,~Z$Raw_0[.x,.y]),
+         d_Naive_0 = map2_dbl(i,j,~Z$Naive_0[.x,.y]),
+         d_Correct_0 = map2_dbl(i,j,~Z$Correct_0[.x,.y])
+  ) %>%
+  summarise(.by = paper,
+            Div_Raw_0 = 1 / sum(p_i * p_j * d_Raw_0),
+            Div_Naive_0 = 1 / sum(p_i * p_j * d_Naive_0),
+            Div_Correct_0 = 1 / sum(p_i * p_j * d_Correct_0)
+            ) %>%
+  left_join(
+    papers_profiles %>%
+  filter(level == 1) %>%
+summarize(crossed = list(crossing(i, i)),
+          .by = paper) %>%
+  unnest(crossed) %>%
+  rename(
+    i = i...1,
+    j = i...2
+  ) %>%
+  left_join(papers_profiles %>% transmute(
+      paper,
+      i = i,
+      p_i = p_o
+    )
+  ) %>%
+    left_join(papers_profiles %>% transmute(
+      paper,
+      j = i,
+      p_j = p_o
+    )
+  ) %>%
+  mutate(d_Raw_1 = map2_dbl(i,j,~Z$Raw_1[.x,.y]),
+         d_Naive_1 = map2_dbl(i,j,~Z$Naive_1[.x,.y]),
+         d_Correct_1 = map2_dbl(i,j,~Z$Correct_1[.x,.y])
+  ) %>%
+  summarise(.by = paper,
+            Div_Raw_1 = 1 / sum(p_i * p_j * d_Raw_1),
+            Div_Naive_1 = 1 / sum(p_i * p_j * d_Naive_1),
+            Div_Correct_1 = 1 / sum(p_i * p_j * d_Correct_1)
+            )
+  ) %>%
+  right_join(papers) -> papers
+```
+
+### Difformity
+
+```{r}
+journals_profile %>%
+  select(-level) %>%
+  full_join(distinct(papers_profiles,
+                     paper, Journal)) %>%
+  full_join(papers_profiles %>% select(-level)) %>%
+  rename(p_e = pool) %>%
+  left_join(concepts$ALL %>%
+              select(i,level)) %>%  
+  left_join(papers %>% select(paper,pub_year)) %>%
+  mutate(p_year =
+           case_when(pub_year == 2013 ~ p_2013,
+                     pub_year == 2015 ~ p_2015,
+                     pub_year == 2017 ~ p_2017)) %>%
+  mutate(
+    p_e = coalesce(p_e,0),
+    p_year = coalesce(p_year,0),
+    p_o = coalesce(p_o,0)
+         ) %>%
+  select(-c(p_2013,p_2015,p_2017)) %>%
+  filter(p_e + p_year + p_o > 0) -> papers_profiles
+```
+
+```{r}
+papers_profiles %>%
+  arrange(Journal, paper, i) %>%
+  filter(level == 0) %>%
+  mutate(z_Raw_0 = map(i, ~ Z$Raw_0[.x,i]),
+         z_Naive_0 = map(i, ~ Z$Naive_0[.x,i]),
+         z_Correct_0 = map(i, ~ Z$Correct_0[.x,i]),
+         .by = paper) %>%
+  mutate(p_e_Raw_0 = map_dbl(z_Raw_0, ~ sum(.x * p_e)),
+         p_e_Naive_0 = map_dbl(z_Naive_0, ~ sum(.x * p_e)),
+         p_e_Correct_0 = map_dbl(z_Correct_0, ~ sum(.x * p_e)),
+         p_o_Raw_0 = map_dbl(z_Raw_0, ~ sum(.x * p_o)),
+         p_o_Naive_0 = map_dbl(z_Naive_0, ~ sum(.x * p_o)),
+         p_o_Correct_0 = map_dbl(z_Correct_0, ~ sum(.x * p_o)),
+         p_year_Raw_0 = map_dbl(z_Raw_0, ~ sum(.x * p_year)),
+         p_year_Naive_0 = map_dbl(z_Naive_0, ~ sum(.x * p_year)),
+         p_year_Correct_0 = map_dbl(z_Correct_0, ~ sum(.x * p_year)),
+         p_e_Raw_0 = p_e_Raw_0/sum(p_e_Raw_0),
+         p_e_Naive_0 = p_e_Naive_0/sum(p_e_Naive_0),
+         p_e_Correct_0 = p_e_Correct_0/sum(p_e_Correct_0),
+         p_o_Raw_0 = p_o_Raw_0/sum(p_o_Raw_0),
+         p_o_Naive_0 = p_o_Naive_0/sum(p_o_Naive_0),
+         p_o_Correct_0 = p_o_Correct_0/sum(p_o_Correct_0),
+         p_year_Raw_0 = p_year_Raw_0/sum(p_year_Raw_0),
+         p_year_Naive_0 = p_year_Naive_0/sum(p_year_Naive_0),
+         p_year_Correct_0 = p_year_Correct_0/sum(p_year_Correct_0),
+         .by = paper) %>%
+  summarise(
+    phi_e_Raw_0 = sum(abs(p_e_Raw_0 - p_o_Raw_0)/((abs(p_e_Raw_0) + abs(p_o_Raw_0))*2), na.rm = T),
+    phi_e_Naive_0 = sum(abs(p_e_Naive_0 - p_o_Naive_0)/((abs(p_e_Naive_0) + abs(p_o_Naive_0))*2), na.rm = T),
+    phi_e_Correct_0 = sum(abs(p_e_Correct_0 - p_o_Correct_0)/((abs(p_e_Correct_0) + abs(p_o_Correct_0))*2), na.rm = T),
+    phi_year_Raw_0 = sum(abs(p_year_Raw_0 - p_o_Raw_0)/((abs(p_year_Raw_0) + abs(p_o_Raw_0))*2), na.rm = T),
+    phi_year_Naive_0 = sum(abs(p_year_Naive_0 - p_o_Naive_0)/((abs(p_year_Naive_0) + abs(p_o_Naive_0))*2), na.rm = T),
+    phi_year_Correct_0 = sum(abs(p_year_Correct_0 - p_o_Correct_0)/((abs(p_year_Correct_0) + abs(p_o_Correct_0))*2), na.rm = T),
+    .by = paper
+  ) %>%
+  left_join(
+    papers_profiles %>%
+  filter(level == 1) %>%
+    arrange(Journal, paper, i) %>%
+  mutate(z_Raw_1 = map(i, ~ Z$Raw_1[.x,i]),
+         z_Naive_1 = map(i, ~ Z$Naive_1[.x,i]),
+         z_Correct_1 = map(i, ~ Z$Correct_1[.x,i]),
+         .by = paper) %>%
+  mutate(p_e_Raw_1 = map_dbl(z_Raw_1, ~ sum(.x * p_e)),
+         p_e_Naive_1 = map_dbl(z_Naive_1, ~ sum(.x * p_e)),
+         p_e_Correct_1 = map_dbl(z_Correct_1, ~ sum(.x * p_e)),
+         p_o_Raw_1 = map_dbl(z_Raw_1, ~ sum(.x * p_o)),
+         p_o_Naive_1 = map_dbl(z_Naive_1, ~ sum(.x * p_o)),
+         p_o_Correct_1 = map_dbl(z_Correct_1, ~ sum(.x * p_o)),
+         p_year_Raw_1 = map_dbl(z_Raw_1, ~ sum(.x * p_year)),
+         p_year_Naive_1 = map_dbl(z_Naive_1, ~ sum(.x * p_year)),
+         p_year_Correct_1 = map_dbl(z_Correct_1, ~ sum(.x * p_year)),
+         p_e_Raw_1 = p_e_Raw_1/sum(p_e_Raw_1),
+         p_e_Naive_1 = p_e_Naive_1/sum(p_e_Naive_1),
+         p_e_Correct_1 = p_e_Correct_1/sum(p_e_Correct_1),
+         p_o_Raw_1 = p_o_Raw_1/sum(p_o_Raw_1),
+         p_o_Naive_1 = p_o_Naive_1/sum(p_o_Naive_1),
+         p_o_Correct_1 = p_o_Correct_1/sum(p_o_Correct_1),
+         p_year_Raw_1 = p_year_Raw_1/sum(p_year_Raw_1),
+         p_year_Naive_1 = p_year_Naive_1/sum(p_year_Naive_1),
+         p_year_Correct_1 = p_year_Correct_1/sum(p_year_Correct_1),
+         .by = paper) %>%
+  summarise(
+    phi_e_Raw_1 = sum(abs(p_e_Raw_1 - p_o_Raw_1)/((abs(p_e_Raw_1) + abs(p_o_Raw_1))*2), na.rm = T),
+    phi_e_Naive_1 = sum(abs(p_e_Naive_1 - p_o_Naive_1)/((abs(p_e_Naive_1) + abs(p_o_Naive_1))*2), na.rm = T),
+    phi_e_Correct_1 = sum(abs(p_e_Correct_1 - p_o_Correct_1)/((abs(p_e_Correct_1) + abs(p_o_Correct_1))*2), na.rm = T),
+    phi_year_Raw_1 = sum(abs(p_year_Raw_1 - p_o_Raw_1)/((abs(p_year_Raw_1) + abs(p_o_Raw_1))*2), na.rm = T),
+    phi_year_Naive_1 = sum(abs(p_year_Naive_1 - p_o_Naive_1)/((abs(p_year_Naive_1) + abs(p_o_Naive_1))*2), na.rm = T),
+    phi_year_Correct_1 = sum(abs(p_year_Correct_1 - p_o_Correct_1)/((abs(p_year_Correct_1) + abs(p_o_Correct_1))*2), na.rm = T),
+    .by = paper
+  )
+  ) %>%
+  right_join(papers) -> papers
+  
+papers %>%
+  filter(!Div_Raw_1 %>% is.na(),
+         !Div_Raw_0 %>% is.na()) -> papers
+```
+
+### Visualise IDR
+
+```{r}
+papers %>%
+  dplyr::select(starts_with("Div")) %>%
+  pivot_longer(starts_with("Div")) %>%
+  ggplot() +
+    scale_color_manual(
+    values = c("blue","cyan",
+               "olivedrab","gold",
+               "firebrick","red")
+  ) +
+  geom_density(aes(value - 1,
+                   color = name)
+               ) +
+  theme_test()
+
+papers %>%
+  dplyr::select(starts_with("phi_e")) %>%
+  pivot_longer(starts_with("phi_e")) %>%
+  mutate(e = "e") %>%
+  add_row(
+    papers %>%
+  dplyr::select(starts_with("phi_year")) %>%
+  pivot_longer(starts_with("phi_year")) %>%
+  mutate(e = "year")
+  ) %>%
+  mutate(name = name %>% str_remove("^[^_]*_[^_]*_")) %>%
+  ggplot() +
+  geom_density(aes(value,
+                   color = name)
+               ) +
+    scale_color_manual(
+    values = c("blue","cyan",
+               "olivedrab","gold",
+               "firebrick","red")
+  ) +
+  theme_test() +
+  xlim(0,20) +
+  facet_grid(e ~ .)
+```
+
+#### Free-space, looking for oddities
+
+Spiegare casi altissimi
+
+```{r}
+papers %>%
+  select(paper,starts_with("phi_")) %>% View()
+
+papers %>%
+  filter(
+    paper == "https://openalex.org/W2082127127"
+  ) %>%
+  select(paper,concepts,Journal) %>%
+  unnest(concepts) %>%
+  filter(level == 1) %>%
+  transmute(paper,Journal,
+            p_o = score/sum(score),
+            i = display_name) %>%
+  filter(p_o > 0) %>%
+  mutate(z_Raw_1 = map(i, ~ Z$Raw_1[.x,i]),
+         z_Naive_1 = map(i, ~ Z$Naive_1[.x,i]),
+         z_Correct_1 = map(i, ~ Z$Correct_1[.x,i]),
+         .by = paper) %>%
+  mutate(
+  p_o_Raw_1 = map_dbl(z_Raw_1, ~ sum(.x * p_o)),
+  p_o_Naive_1 = map_dbl(z_Naive_1, ~ sum(.x * p_o)),
+  p_o_Correct_1 = map_dbl(z_Correct_1, ~ sum(.x * p_o)),
+  p_o_Raw_1 = p_o_Raw_1/sum(p_o_Raw_1),
+  p_o_Naive_1 = p_o_Naive_1/sum(p_o_Naive_1),
+  p_o_Correct_1 = p_o_Correct_1/sum(p_o_Correct_1)
+  )
+
+
+
+```
+
+```{r}
+
+```
+
+```{full_join(journals_profile %>%}
+              filter(
+                Journal == "Journal of Operational Research",
+                level == 1
+              ))
+
+journals_profile %>%
+              filter(
+                Journal == "European Journal of Operational Research",
+                level == 1
+              )  %>% View()
+  
+journals_profile %>%
+              filter(
+                Journal == "Research Policy") %>% View()
+```
+
+## Results
+
+### Adding Citations
+
+```{r}
+papers %>%
+  unnest(counts_by_year) %>%
+  rename(c = cited_by_count) %>%
+  arrange(paper, year) %>%
+  pivot_wider(names_from = year,
+              values_from = c) %>%
+  mutate_at(vars(starts_with("20")), ~coalesce(., 0)) %>%
+  select(-`NA`) %>%
+  mutate(y_1 =
+           case_when(pub_year == 2013 ~
+                       `2013` + `2014`,
+                     pub_year == 2015 ~
+                       `2015` + `2016`,
+                     pub_year == 2017 ~
+                       `2017` + `2018`),
+         y_3 =
+           case_when(pub_year == 2013 ~
+                       y_1 + `2015` + `2016`,
+                     pub_year == 2015 ~
+                       y_1 + `2017` + `2018`,
+                     pub_year == 2017 ~
+                       y_1 + `2019` + `2020`),
+         y_5 =
+           case_when(pub_year == 2013 ~
+                       y_3 + `2017` + `2018`,
+                     pub_year == 2015 ~
+                       y_3 + `2019` + `2020`,
+                     pub_year == 2017 ~
+                       y_3 + `2021` + `2022`)
+         ) %>%
+  select(-starts_with("20")) -> papers
+
+```
+
+#### Checks
+
+```{r}
+papers %>%
+  mutate(n_authors_class = n_authors_class %>%
+              factor(levels = c("1","2","3","4+")
+                     )
+         ) %>%
+  arrange(n_authors_class) %>%
+  summarise(.by = n_authors_class,
+            y_1 = median(y_1),
+            y_3 = median(y_3),
+            y_5 = median(y_5))
+
+match_db %>%
+  ggplot(aes(x = y_1+1)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), bins = 50, fill = "lightblue", color = "black") +
+  scale_x_log10() +
+  theme_test()
+
+papers %>%
+  summarise(y_1 = y_1 %>% median,
+            y_3 = y_3 %>% median,
+            y_5 = y_5 %>% median,
+            .by = n_authors_class
+            ) %>%
+  arrange(n_authors_class)
+```
+
+### Exact Matching
+
+```{r}
+papers %>%
+  mutate(
+    .by = c(Journal, publication_date, n_authors_class),
+    n_paired = n(),
+    g = cur_group_id(),
+    .before = 1) %>%
+  filter(n_paired > 1) %>%
+  rename_with(~ str_c("X_", .),
+              starts_with("Div") | starts_with("phi")
+                ) %>%
+  select(-c(issue,author,doi,open_access,concepts,n_authors,Journal,n_authors_class,publication_date,n_paired)
+         ) %>%
+  arrange(g) -> exact_matched_db
+
+exact_matched_db %>%
+  mutate(
+    .by = g,
+    across(
+      starts_with("X_"),
+      ~var(.),
+      .names = "Var_{.col}")
+    ) %>%
+  filter(
+    across(
+      starts_with("Var_"),
+      ~ . > 0)
+  ) -> exact_matched_db
+```
+
+#### Functions
+
+```{r}
+qpois <- function(formula, data, ...) {
+  formula <- paste(formula, "| g") %>% as.formula()
+  fixest::feglm(data = data,
+                family = quasipoisson,
+           fml = formula)}
+
+negbin <- function(formula, data, ...) {
+  formula <- paste(formula, "| g") %>% as.formula()
+  fixest::fenegbin(data = data,
+           fml = formula)}
+
+logit <- function(formula, data, ...) {
+  formula <- paste(formula, "| g") %>% as.formula()
+  fixest::feglm(data = data,
+                family = binomial(link = "logit"),
+           fml = formula)}
+
+probit <- function(formula, data, ...) {
+  formula <- paste(formula, "| g") %>% as.formula()
+  fixest::feglm(data = data,
+                family = binomial(link = "probit"),
+           fml = formula)}
+```
+
+#### Loglinear Multiverse
+
+```{r}
+specr::setup(exact_matched_db %>%
+               mutate(across(starts_with("X_"),
+                             ~ scale(.)
+                             ))
+               ,
+             x = exact_matched_db[3:20] %>% names(),
+  y = c("y_1","y_3","y_5"),
+  model = c("qpois","negbin"),
+  subsets = list(
+               pub_year = c(2013,2015,2017)
+               )
+             ) %>%
+  specr() %>%
+  as_tibble() -> results
+```
+
+### Visual
+
+#### Visual 1
+
+```{r}
+results %>%
+  filter(subsets != "all") %>%
+  mutate(x =
+           str_replace_all(x,"phi_e","Phi-e") %>%
+           str_replace_all("phi_y","Phi-y") %>%
+           str_replace_all("Div","Delta") %>%
+           str_remove("X_"),
+         Lag = recode(y,
+                      y_1 = "1 year",
+                      y_3 = "3 years",
+                      y_5 = "5 years"
+         )
+         ) %>%
+  separate(x,
+           into = c("Measure", "Matrix", "Granul."),
+           sep = "_") %>%
+  rename(link = model,
+         year = pub_year) -> results_filtered_loglin
+
+results_filtered_loglin %>%
+  specr::plot_choices(
+    choices = c("Lag","year")
+  )
+
+results_filtered_loglin %>%
+  specr::plot_choices(
+    choices = c("Measure","Matrix","Granul.","link")
+  )
+```
+
+## Extension
+
+```{r}
+papers %>%
+  write_xlsx("papers_db")
+
+papers %>%
+  unnest(concepts) %>%
+    filter(level == 0) %>%
+    mutate(i = recode(display_name,
+                    `Computer science` = "Comp. Sci.",
+                    `Political science` = "Law & Pol.",
+                    Mathematics = "Math.",
+                    `Materials science` = "Materials Sci.",
+                    `Environmental science` = "Environ. Sci."
+                    )) %>%
+  arrange(i) %>%
+  mutate(score = score/sum(score),
+         .by = c(paper)) %>%
+  select(-c(display_name,level,wikidata,id)) %>%
+  pivot_wider(names_from = i,
+              values_from = score,
+              values_fill = 0) -> papers
+
+papers %>%
+  write_xlsx("extended_papers_db.xlsx")
+
+papers$Economics %>% cor(papers$y_1, method = "kendall")
+papers$Economics %>% cor(papers$y_3, method = "kendall")
+papers$Economics %>% cor(papers$y_5, method = "kendall")
+
+papers$Business %>% cor(papers$y_1, method = "kendall")
+papers$Business %>% cor(papers$y_3, method = "kendall")
+papers$Business %>% cor(papers$y_5, method = "kendall")
+
+papers$Math. %>% cor(papers$y_1, method = "kendall")
+papers$Math. %>% cor(papers$y_3, method = "kendall")
+papers$Math. %>% cor(papers$y_5, method = "kendall")
+
+papers$`Comp. Sci.` %>% cor(papers$y_1, method = "kendall")
+papers$`Comp. Sci.` %>% cor(papers$y_3, method = "kendall")
+papers$`Comp. Sci.` %>% cor(papers$y_5, method = "kendall")
+```
