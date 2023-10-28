@@ -17,10 +17,12 @@ pacman::p_load(
   rvest,
   tidytext,
   grid,
+  cowplot,
 ggridges,
   ggExtra,
   hrbrthemes,
-  heatmaply
+heatmaply,
+factoextra
 )
 ```
 
@@ -305,28 +307,54 @@ papers <- papers_raw %>%
          !referenced_works %>% is.na(),
          !doi %>% is.na()) %>%
   transmute(paper = id,
-           title = display_name,
+           title = display_name %>% tolower(),
            author,
            Journal = so,
-           publication_date,
+           publication_date = publication_date %>% as.Date(),
            pub_year = publication_year,
-           issue,
            counts_by_year,
            concepts,
-           doi,
-           open_access = any_repository_has_fulltext) %>%
+           extratime = (publication_date -
+                          as.Date(str_c(pub_year,"-12-31"))) %>%
+                                    as.integer()*-1  
+                        ) %>%
   arrange(publication_date) %>%
+  filter(title %>% str_detect("erratum", negate = T),
+         title %>% str_detect("editor", negate = T),
+         title %>% str_detect("corrige", negate = T),
+         title %>% str_detect("publisher correction", negate = T),
+         title %>% str_detect("book review", negate = T),
+         title %>% str_detect("isbn", negate = T)
+         ) %>%
   distinct(title, .keep_all = T)
+  
+
+papers %>%
+  unnest(author) %>%
+  rename(author = au_display_name) %>%
+  filter(!author %>% is.na()) %>%
+  count(title) %>%
+  rename(n_authors = n) %>%
+  right_join(papers) %>%
+  mutate(n_authors_class =
+           case_when(n_authors <= 3 ~ n_authors %>% as.character(),
+                     n_authors > 3 ~ "4+") %>%
+           factor(levels = c("1","2","3","4+")),
+         n_author_ordinal = 
+           case_when(n_authors < 3 ~ n_authors %>% as.integer(),
+                     n_authors >= 3 ~ 3)
+         ) -> papers
 ```
 
-### Pooled Journal partitions
+### Pooled Journal
 
 ```{r}
-papers %>%
+journals_profile <- papers %>%
   unnest(concepts) %>%
-    filter(level < 2) %>%
+    filter(level < 2,
+           score>0) %>%
   select(Journal,paper,pub_year,level,
-         i = display_name,score) %>%
+         i = display_name,p=score) %>%
     mutate(i = recode(i,
                     `Computer science` = "Comp. Sci.",
                     `Political science` = "Law & Pol.",
@@ -334,9 +362,9 @@ papers %>%
                     `Materials science` = "Materials Sci.",
                     `Environmental science` = "Environ. Sci."
                     )) %>%
-  mutate(score = score/sum(score),
+  mutate(p = p/sum(p),
          .by = c(paper,level)) %>%
-  summarise(p = sum(score),
+  summarise(p = sum(p),
             .by = c(i,pub_year,Journal,level)) %>%
   mutate(p = p/sum(p),
          .by = c(pub_year,Journal,level)) %>%
@@ -352,11 +380,12 @@ papers %>%
                        p_2017 = 0)) %>%
   inner_join(concepts$ALL %>%
               select(i,level)) %>%
-  left_join(
+  full_join(
     journals %>%
   select(-id) %>%
   unnest(x_concepts) %>%
-    filter(level < 2) %>%
+    filter(level < 2,
+           score > 0) %>%
       mutate(i = recode(display_name,
                     `Computer science` = "Comp. Sci.",
                     `Political science` = "Law & Pol.",
@@ -365,92 +394,21 @@ papers %>%
                     `Environmental science` = "Environ. Sci."
                     )) %>%
   select(Journal,level,i,
-         pool = score) %>%
-  mutate(pool = pool/sum(pool),
+         p_e = score) %>%
+  mutate(p_e = p_e/sum(p_e),
          .by = c(Journal,level))
   ) %>%
-      mutate(pool = coalesce(pool,0)) -> journals_profile
-```
+      mutate(
+        p_2013 = coalesce(p_e,p_2013),
+        p_2015 = coalesce(p_e,p_2015),
+        p_2017 = coalesce(p_e,p_2017),
+        p_e = coalesce(p_e,0))
 
-#### Lollipops
-
-```{r}
-journals_profile %>%
-  filter(level == 0) %>%
-  summarise(p_2013 = sum(p_2013),
-            p_2015 = sum(p_2015),
-            p_2017 = sum(p_2017),
-            pool = sum(pool),
-            .by = i) %>%
-  mutate(
-    p_2013 = p_2013/sum(p_2013),
-    p_2015 = p_2015/sum(p_2015),
-    p_2017 = p_2017/sum(p_2017),
-         pool = pool/sum(pool)
-         ) %>%
-  filter(p_2013 > .02) %>%
-  ggplot() +
-  geom_segment(aes(x=p_2013, xend=p_2017,
-                   y=i, yend=i), color="#804589") +
-    geom_point(aes(x=pool, y=i,
-                 color = "Pooled"),
-             shape = 15) +
-  geom_point(aes(x=p_2017, y=i,
-             color = "2017")) +
-  geom_point(aes(x=p_2015, y=i,
-             color = "2015")) +
-  geom_point(aes(x=p_2013, y=i,
-                 color = "2013")) +
-    scale_color_manual(
-      values = c("salmon","gold","navy","green"),
-      guide  = guide_legend(),
-      name   = element_blank()
-      ) +
-  theme_test(base_size = 18) +
-  theme(axis.title.y = element_blank(),
-        axis.title.x = element_text(size = 12),
-            legend.justification = "right",
-        legend.position = c(0.97, 0.88),
-        legend.box.background = element_blank(),
-        legend.key = element_blank(),
-        legend.background = element_blank(),
-        ) +
-  guides(color = guide_legend(keywidth = .1)) +
-  xlab("Semantic shift in 89 prestigious Journals of Business")
-```
-
-## Pre-process
-
-#### N of authors
-
-```{r}
-papers %>%
-  unnest(author) %>%
-  rename(author = au_display_name) %>%
-  filter(!author %>% is.na()) %>%
-  count(title) %>%
-  rename(n_authors = n) %>%
-  right_join(papers) %>%
-  mutate(n_authors_class =
-           case_when(n_authors <= 3 ~ n_authors %>% as.character(),
-                     n_authors > 3 ~ "4+") %>%
-           factor(levels = c("1","2","3","4+"))
-         ) -> papers
-
-papers %>%
-  ggplot() +
-  geom_bar(aes(x = n_authors_class,
-                     y = ..count../sum(..count..)),
-               fill = "navy")
-```
-
-### Diversity
-
-```{r}
 papers %>%
   select(paper,Journal,concepts) %>%
   unnest(concepts) %>%
-  filter(level < 2) %>%
+  filter(level < 2,
+         score > 0) %>%
   select(paper,Journal,level,
          p_o = score,
          i=display_name) %>%
@@ -465,6 +423,69 @@ papers %>%
                     )) %>%
   filter(p_o > 0) -> papers_profiles
 ```
+
+#### Visuals
+
+```{r}
+journals_profile %>%
+  filter(level == 0) %>%
+  summarise(p_2013 = sum(p_2013),
+            p_2015 = sum(p_2015),
+            p_2017 = sum(p_2017),
+            p_e = sum(p_e),
+            .by = i) %>%
+  mutate(
+    p_2013 = p_2013/sum(p_2013),
+    p_2015 = p_2015/sum(p_2015),
+    p_2017 = p_2017/sum(p_2017),
+    p_e = p_e/sum(p_e)
+         ) %>%
+  filter(p_2013 > .03) %>%
+  arrange(p_e) %>%
+  mutate(i = factor(i, levels = i)) %>%
+  ggplot() +
+  geom_segment(aes(x=p_2013, xend=p_2017,
+                   y=i, yend=i), color="#804589") +
+  geom_point(aes(x=p_2015, y=i,
+             color = "2015")) +
+    geom_point(aes(x=p_2013, y=i,
+                 color = "2013")) +
+    geom_point(aes(x=p_2017, y=i,
+             color = "2017")) +
+      geom_point(aes(x=p_e, y=i,
+                 color = "OA"),
+             shape = 15) +
+    scale_color_manual(
+      values = c("gold","green","navy","firebrick2"),
+      guide  = guide_legend(),
+      name   = element_blank()
+      ) +
+  theme_test(base_size = 18) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 12),
+            legend.justification = "right",
+        legend.position = c(0.97, 0.25),
+        legend.box.background = element_blank(),
+        legend.key = element_blank(),
+        legend.background = element_blank(),
+        ) +
+  guides(color = guide_legend(keywidth = .1)) +
+#  xlab("Semantic shift in 89 prestigious Journals of Business")
+ xlab(NULL)
+
+```
+
+```{r}
+papers %>%
+  ggplot() +
+  geom_bar(aes(x = n_authors_class,
+                     y = ..count../sum(..count..)),
+               fill = "navy")
+```
+
+## Pre-process
+
+### Diversity
 
 ```{r}
 papers_profiles %>%
@@ -490,15 +511,19 @@ summarize(crossed = list(crossing(i, i)),
   ) %>%
   mutate(d_Raw_0 = map2_dbl(i,j,~Z$Raw_0[.x,.y]),
          d_Naive_0 = map2_dbl(i,j,~Z$Naive_0[.x,.y]),
-         d_Correct_0 = map2_dbl(i,j,~Z$Correct_0[.x,.y])
+         d_Correct_0 = map2_dbl(i,j,~Z$Correct_0[.x,.y]),
   ) %>%
   summarise(.by = paper,
-            Div_Raw_0 = 1 / sum(p_i * p_j * d_Raw_0),
-            Div_Naive_0 = 1 / sum(p_i * p_j * d_Naive_0),
-            Div_Correct_0 = 1 / sum(p_i * p_j * d_Correct_0)
+            X_Div_k_Raw_0 = sum(p_i*(1 / sum(p_j * d_Raw_0))),
+            X_Div_k_Naive_0 = sum(p_i*(1 / sum(p_j * d_Naive_0))),
+            X_Div_k_Correct_0 = sum(p_i*(1 / sum(p_j * d_Correct_0))),
+            X_Div_Bal_Raw_0 = 1 / sum(p_i * p_j * d_Raw_0),
+            X_Div_Bal_Naive_0 = 1 / sum(p_i * p_j * d_Naive_0),
+            X_Div_Bal_Correct_0 = 1 / sum(p_i * p_j * d_Correct_0)
             ) %>%
-  left_join(
-    papers_profiles %>%
+  left_join(papers) -> papers
+  
+papers_profiles %>%
   filter(level == 1) %>%
 summarize(crossed = list(crossing(i, i)),
           .by = paper) %>%
@@ -521,18 +546,79 @@ summarize(crossed = list(crossing(i, i)),
   ) %>%
   mutate(d_Raw_1 = map2_dbl(i,j,~Z$Raw_1[.x,.y]),
          d_Naive_1 = map2_dbl(i,j,~Z$Naive_1[.x,.y]),
-         d_Correct_1 = map2_dbl(i,j,~Z$Correct_1[.x,.y])
+         d_Correct_1 = map2_dbl(i,j,~Z$Correct_1[.x,.y]),
+         .by = paper
   ) %>%
   summarise(.by = paper,
-            Div_Raw_1 = 1 / sum(p_i * p_j * d_Raw_1),
-            Div_Naive_1 = 1 / sum(p_i * p_j * d_Naive_1),
-            Div_Correct_1 = 1 / sum(p_i * p_j * d_Correct_1)
-            )
-  ) %>%
-  right_join(papers) -> papers
+            X_Div_k_Raw_1 = sum(p_i*(1 / sum(p_j * d_Raw_1))),
+            X_Div_k_Naive_1 = sum(p_i*(1 / sum(p_j * d_Naive_1))),
+            X_Div_k_Correct_1 = sum(p_i*(1 / sum(p_j * d_Correct_1))),
+            X_Div_Bal_Raw_1 = 1 / sum(p_i * p_j * d_Raw_1),
+            X_Div_Bal_Naive_1 = 1 / sum(p_i * p_j * d_Naive_1),
+            X_Div_Bal_Correct_1 = 1 / sum(p_i * p_j * d_Correct_1)
+            ) %>%
+  left_join(papers) -> papers
 ```
 
-### Difformity
+#### Visualise Diversity
+
+```{r}
+papers %>%
+  dplyr::select(paper, starts_with("X_Div_")) %>%
+  pivot_longer(starts_with("X_Div_")) %>%
+  separate(name,
+           into = c("X","Div","Measure","Naive","Granul"),
+           sep = "_") %>%
+  mutate(Measure = Measure %>% factor(levels = c("k",
+                                                 "Bal")),
+         Naive = Naive %>% factor(levels = c("Naive",
+                                                 "Raw",
+                                                 "Correct"))
+         ) %>%
+  pivot_wider(names_from = Granul,
+              values_from = value,
+              names_prefix = "Granul_") -> div_fig_db
+  
+ggdraw(
+div_fig_db %>%
+  ggplot() +
+  geom_histogram(aes(x = Granul_0 ,
+                     y = ..count../sum(..count..)),
+                fill = "firebrick",
+                bins = 30,
+                alpha = .5,
+               ) +
+  geom_histogram(aes(Granul_1,
+                   y = ..count../sum(..count..)),
+                   fill = "navy",
+                 bins = 30,
+               alpha = .5
+               ) +
+  theme_test() +
+  facet_grid(Measure ~ Naive) +
+  theme(
+    strip.text = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10),
+        axis.ticks.x = element_line(size = .3),
+        axis.ticks.length = unit(0.1, "cm"),
+    axis.title.y = element_text(angle = 0),
+    legend.position = "none") +
+  scale_x_continuous(breaks = c(3, 6, 9)) +
+  xlab(expression(Delta * (x-1))) +
+  xlab(NULL) +
+  ylab(NULL)
+) +
+  draw_label("Z-Naive\nVariety", .355,.913,hjust=1) +
+draw_label("Z-Parametric\nDisparity", .665,.913,hjust=1) +
+  draw_label("Z-Semiparam.\nDisparity", .975,.913,hjust = 1) +
+  draw_label("Z-Naive\nBalance", .355,.453,hjust=1) +
+draw_label("Z-Parametric\nIntegration", .665,.453,hjust=1) +
+  draw_label("Z-Semiparam.\nIntegration", .975,.453,hjust=1)
+
+```
+
+### Divergence
 
 ```{r}
 journals_profile %>%
@@ -540,7 +626,6 @@ journals_profile %>%
   full_join(distinct(papers_profiles,
                      paper, Journal)) %>%
   full_join(papers_profiles %>% select(-level)) %>%
-  rename(p_e = pool) %>%
   left_join(concepts$ALL %>%
               select(i,level)) %>%  
   left_join(papers %>% select(paper,pub_year)) %>%
@@ -584,13 +669,15 @@ papers_profiles %>%
          p_year_Naive_0 = p_year_Naive_0/sum(p_year_Naive_0),
          p_year_Correct_0 = p_year_Correct_0/sum(p_year_Correct_0),
          .by = paper) %>%
+  mutate(across(where(is.numeric),
+                ~ ifelse(is.nan(.), 0, .))) %>%
   summarise(
-    phi_e_Raw_0 = sum(abs(p_e_Raw_0 - p_o_Raw_0)/((abs(p_e_Raw_0) + abs(p_o_Raw_0))*2), na.rm = T),
-    phi_e_Naive_0 = sum(abs(p_e_Naive_0 - p_o_Naive_0)/((abs(p_e_Naive_0) + abs(p_o_Naive_0))*2), na.rm = T),
-    phi_e_Correct_0 = sum(abs(p_e_Correct_0 - p_o_Correct_0)/((abs(p_e_Correct_0) + abs(p_o_Correct_0))*2), na.rm = T),
-    phi_year_Raw_0 = sum(abs(p_year_Raw_0 - p_o_Raw_0)/((abs(p_year_Raw_0) + abs(p_o_Raw_0))*2), na.rm = T),
-    phi_year_Naive_0 = sum(abs(p_year_Naive_0 - p_o_Naive_0)/((abs(p_year_Naive_0) + abs(p_o_Naive_0))*2), na.rm = T),
-    phi_year_Correct_0 = sum(abs(p_year_Correct_0 - p_o_Correct_0)/((abs(p_year_Correct_0) + abs(p_o_Correct_0))*2), na.rm = T),
+    X_phi_e_Raw_0 = sum((abs(p_e_Raw_0 - p_o_Raw_0)*(p_e_Raw_0))/((abs(p_e_Raw_0) + abs(p_o_Raw_0))), na.rm = T),
+    X_phi_e_Naive_0 = sum((abs(p_e_Naive_0 - p_o_Naive_0)*p_e_Naive_0)/((abs(p_e_Naive_0) + abs(p_o_Naive_0))), na.rm = T),
+    X_phi_e_Correct_0 = sum((abs(p_e_Correct_0 - p_o_Correct_0)*p_e_Correct_0)/((abs(p_e_Correct_0) + abs(p_o_Correct_0))), na.rm = T),
+    X_phi_year_Raw_0 = sum((abs(p_year_Raw_0 - p_o_Raw_0)* p_year_Raw_0)/((abs(p_year_Raw_0) + abs(p_o_Raw_0))), na.rm = T),
+    X_phi_year_Naive_0 = sum((abs(p_year_Naive_0 - p_o_Naive_0)*p_year_Naive_0)/((abs(p_year_Naive_0) + abs(p_o_Naive_0))), na.rm = T),
+    X_phi_year_Correct_0 = sum((abs(p_year_Correct_0 - p_o_Correct_0)*p_year_Correct_0)/((abs(p_year_Correct_0) + abs(p_o_Correct_0))), na.rm = T),
     .by = paper
   ) %>%
   left_join(
@@ -620,123 +707,102 @@ papers_profiles %>%
          p_year_Naive_1 = p_year_Naive_1/sum(p_year_Naive_1),
          p_year_Correct_1 = p_year_Correct_1/sum(p_year_Correct_1),
          .by = paper) %>%
+  mutate(across(where(is.numeric),
+                ~ ifelse(is.nan(.), 0, .))) %>%
   summarise(
-    phi_e_Raw_1 = sum(abs(p_e_Raw_1 - p_o_Raw_1)/((abs(p_e_Raw_1) + abs(p_o_Raw_1))*2), na.rm = T),
-    phi_e_Naive_1 = sum(abs(p_e_Naive_1 - p_o_Naive_1)/((abs(p_e_Naive_1) + abs(p_o_Naive_1))*2), na.rm = T),
-    phi_e_Correct_1 = sum(abs(p_e_Correct_1 - p_o_Correct_1)/((abs(p_e_Correct_1) + abs(p_o_Correct_1))*2), na.rm = T),
-    phi_year_Raw_1 = sum(abs(p_year_Raw_1 - p_o_Raw_1)/((abs(p_year_Raw_1) + abs(p_o_Raw_1))*2), na.rm = T),
-    phi_year_Naive_1 = sum(abs(p_year_Naive_1 - p_o_Naive_1)/((abs(p_year_Naive_1) + abs(p_o_Naive_1))*2), na.rm = T),
-    phi_year_Correct_1 = sum(abs(p_year_Correct_1 - p_o_Correct_1)/((abs(p_year_Correct_1) + abs(p_o_Correct_1))*2), na.rm = T),
+    X_phi_e_Raw_1 = sum((abs(p_e_Raw_1 - p_o_Raw_1)*p_e_Raw_1)/((abs(p_e_Raw_1) + abs(p_o_Raw_1))), na.rm = T),
+    X_phi_e_Naive_1 = sum((abs(p_e_Naive_1 - p_o_Naive_1)*p_e_Naive_1)/((abs(p_e_Naive_1) + abs(p_o_Naive_1))), na.rm = T),
+    X_phi_e_Correct_1 = sum((abs(p_e_Correct_1 - p_o_Correct_1) * p_e_Correct_1)/((abs(p_e_Correct_1) + abs(p_o_Correct_1))), na.rm = T),
+    X_phi_year_Raw_1 = sum((abs(p_year_Raw_1 - p_o_Raw_1) * p_year_Raw_1)/((abs(p_year_Raw_1) + abs(p_o_Raw_1))), na.rm = T),
+    X_phi_year_Naive_1 = sum((abs(p_year_Naive_1 - p_o_Naive_1) * p_year_Naive_1)/((abs(p_year_Naive_1) + abs(p_o_Naive_1))), na.rm = T),
+    X_phi_year_Correct_1 = sum((abs(p_year_Correct_1 - p_o_Correct_1)*p_year_Correct_1)/((abs(p_year_Correct_1) + abs(p_o_Correct_1))), na.rm = T),
     .by = paper
-  )
-  ) %>%
+  )) %>%
   right_join(papers) -> papers
-  
-papers %>%
-  filter(!Div_Raw_1 %>% is.na(),
-         !Div_Raw_0 %>% is.na()) -> papers
 ```
 
-### Visualise IDR
+#### Visualise Divergence
 
 ```{r}
 papers %>%
-  dplyr::select(starts_with("Div")) %>%
-  pivot_longer(starts_with("Div")) %>%
+  dplyr::select(paper, starts_with("X_phi_")) %>%
+  pivot_longer(starts_with("X_phi_")) %>%
+  separate(name,
+           into = c("X","phi","Measure","Naive","Granul"),
+           sep = "_") %>%
+  mutate(Measure = Measure %>% factor(levels = c("year",
+                                                 "e")),
+         Naive = Naive %>% factor(levels = c("Naive",
+                                                 "Raw",
+                                                 "Correct"))
+         ) %>%
+  pivot_wider(names_from = Granul,
+              values_from = value,
+              names_prefix = "Granul_") -> phi_fig_db
+  
+ggdraw(
+phi_fig_db %>%
   ggplot() +
-    scale_color_manual(
-    values = c("blue","cyan",
-               "olivedrab","gold",
-               "firebrick","red")
-  ) +
-  geom_density(aes(value - 1,
-                   color = name)
+  geom_histogram(aes(x = Granul_0 ,
+                     y = ..count../sum(..count..)),
+                fill = "firebrick",
+                bins = 30,
+                alpha = .5,
                ) +
-  theme_test()
-
-papers %>%
-  dplyr::select(starts_with("phi_e")) %>%
-  pivot_longer(starts_with("phi_e")) %>%
-  mutate(e = "e") %>%
-  add_row(
-    papers %>%
-  dplyr::select(starts_with("phi_year")) %>%
-  pivot_longer(starts_with("phi_year")) %>%
-  mutate(e = "year")
-  ) %>%
-  mutate(name = name %>% str_remove("^[^_]*_[^_]*_")) %>%
-  ggplot() +
-  geom_density(aes(value,
-                   color = name)
+  geom_histogram(aes(Granul_1,
+                   y = ..count../sum(..count..)),
+                   fill = "navy",
+                 bins = 30,
+               alpha = .5
                ) +
-    scale_color_manual(
-    values = c("blue","cyan",
-               "olivedrab","gold",
-               "firebrick","red")
-  ) +
   theme_test() +
-  xlim(0,20) +
-  facet_grid(e ~ .)
-```
-
-#### Free-space, looking for oddities
-
-Spiegare casi altissimi
-
-```{r}
-papers %>%
-  select(paper,starts_with("phi_")) %>% View()
-
-papers %>%
-  filter(
-    paper == "https://openalex.org/W2082127127"
-  ) %>%
-  select(paper,concepts,Journal) %>%
-  unnest(concepts) %>%
-  filter(level == 1) %>%
-  transmute(paper,Journal,
-            p_o = score/sum(score),
-            i = display_name) %>%
-  filter(p_o > 0) %>%
-  mutate(z_Raw_1 = map(i, ~ Z$Raw_1[.x,i]),
-         z_Naive_1 = map(i, ~ Z$Naive_1[.x,i]),
-         z_Correct_1 = map(i, ~ Z$Correct_1[.x,i]),
-         .by = paper) %>%
-  mutate(
-  p_o_Raw_1 = map_dbl(z_Raw_1, ~ sum(.x * p_o)),
-  p_o_Naive_1 = map_dbl(z_Naive_1, ~ sum(.x * p_o)),
-  p_o_Correct_1 = map_dbl(z_Correct_1, ~ sum(.x * p_o)),
-  p_o_Raw_1 = p_o_Raw_1/sum(p_o_Raw_1),
-  p_o_Naive_1 = p_o_Naive_1/sum(p_o_Naive_1),
-  p_o_Correct_1 = p_o_Correct_1/sum(p_o_Correct_1)
-  )
-
-
-
-```
-
-```{r}
-
-```
-
-```{full_join(journals_profile %>%}
-              filter(
-                Journal == "Journal of Operational Research",
-                level == 1
-              ))
-
-journals_profile %>%
-              filter(
-                Journal == "European Journal of Operational Research",
-                level == 1
-              )  %>% View()
-  
-journals_profile %>%
-              filter(
-                Journal == "Research Policy") %>% View()
+  facet_grid(Measure ~ Naive) +
+  theme(
+    strip.text = element_blank(),
+        strip.background = element_blank(),
+        axis.text.x = element_text(size = 10),
+        axis.ticks.x = element_line(size = .3),
+        axis.ticks.length = unit(0.1, "cm"),
+    axis.title.y = element_text(angle = 0),
+    legend.position = "none") +
+  scale_x_continuous(breaks = c(.25, .5, .75)) +
+  xlab(expression(Delta * (x-1))) +
+  xlab(NULL) +
+  ylab(NULL)
+) +
+  draw_label("Z-Naive\nLocal Φ", .355,.913,hjust=1) +
+draw_label("Z-Parametric\nLocal Φ", .665,.913,hjust=1) +
+  draw_label("Z-Semiparam.\nLocal Φ", .975,.913,hjust = 1) +
+  draw_label("Z-Naive\nGlobal Φ", .355,.453,hjust=1) +
+draw_label("Z-Parametric\nGlobal Φ", .665,.453,hjust=1) +
+  draw_label("Z-Semiparam.\nGlobal Φ", .975,.453,hjust=1)
 ```
 
 ## Results
+
+### Corrmap
+
+```{r}
+papers %>%
+  select(starts_with("X_")) %>%
+  rename_all(~ str_remove(., "X_")) %>%
+  transmute(
+    "Variety" =
+      rowMeans(select(., starts_with("Div_k") & contains("Naive") )),
+    "Disparity" =
+      rowMeans(select(., starts_with("Div_k") & !contains("Naive") )),
+    "Balance" =
+      rowMeans(select(., starts_with("Div_k") & contains("Naive") )),
+    "Integration" =
+      rowMeans(select(., starts_with("Div_k") & !contains("Naive") )),
+    "G. Divergence" = rowMeans(select(., starts_with("phi_e"))),
+    "L. Divergence" = rowMeans(select(., starts_with("phi_year")))
+    ) %>%
+      cor() %>%
+  ggheatmap()
+  
+
+```
 
 ### Adding Citations
 
@@ -772,149 +838,423 @@ papers %>%
                        y_3 + `2021` + `2022`)
          ) %>%
   select(-starts_with("20")) -> papers
-
 ```
 
-#### Checks
+### Checks and Balance
 
 ```{r}
 papers %>%
-  mutate(n_authors_class = n_authors_class %>%
-              factor(levels = c("1","2","3","4+")
-                     )
-         ) %>%
   arrange(n_authors_class) %>%
   summarise(.by = n_authors_class,
+            n = n(),
+            y_1 = median(y_1),
+            y_3 = median(y_3),
+            y_5 = median(y_5)) %>%
+ xtable::xtable() %>% print()
+
+papers %>%
+  arrange(pub_year) %>%
+  summarise(.by = pub_year,
+            n = n(),
             y_1 = median(y_1),
             y_3 = median(y_3),
             y_5 = median(y_5))
 
-match_db %>%
-  ggplot(aes(x = y_1+1)) +
-  geom_histogram(aes(y = ..count../sum(..count..)), bins = 50, fill = "lightblue", color = "black") +
-  scale_x_log10() +
-  theme_test()
-
 papers %>%
-  summarise(y_1 = y_1 %>% median,
-            y_3 = y_3 %>% median,
-            y_5 = y_5 %>% median,
-            .by = n_authors_class
-            ) %>%
-  arrange(n_authors_class)
+  arrange(n_authors_class) %>%
+  summarise(.by = n_authors_class,
+            across(starts_with("X_phi_") | starts_with("Div_"),
+                   ~ mean(., na.rm = TRUE),
+                   .names = "mean_{.col}")
+            )
 ```
 
-### Exact Matching
+```{r}
+ggdraw(
+papers %>%
+  select(starts_with("y")) %>%
+  pivot_longer(cols = starts_with("y")) %>%
+  filter(name %>% str_detect("y")) %>%
+  ggplot(aes(x = value+1)) +
+  geom_histogram(aes(y = ..count../sum(..count..)), bins = 20, fill = "lightblue", color = "black") +
+  scale_x_continuous(
+  trans = 'log10',
+  labels = scales::trans_format("log10", scales::math_format(10^.x))
+) +
+  theme_test() +
+    facet_grid(name~.) +
+   theme(strip.text = element_blank(),
+         axis.title.y = element_text(angle = 0)
+         ) +
+  ylab("f(y)") +
+xlab(expression(log[10]("y+1")))
+) +
+  draw_label("After 1 year", .85, .93) +
+  draw_label("After 3 years", .84, .65) +
+  draw_label("After 5 years", .84, .37)
+```
+
+### Functions
 
 ```{r}
-papers %>%
-  mutate(
-    .by = c(Journal, publication_date, n_authors_class),
-    n_paired = n(),
-    g = cur_group_id(),
-    .before = 1) %>%
-  filter(n_paired > 1) %>%
-  rename_with(~ str_c("X_", .),
-              starts_with("Div") | starts_with("phi")
-                ) %>%
-  select(-c(issue,author,doi,open_access,concepts,n_authors,Journal,n_authors_class,publication_date,n_paired)
-         ) %>%
-  arrange(g) -> exact_matched_db
+results = list()
+models = list()
 
-exact_matched_db %>%
-  mutate(
-    .by = g,
-    across(
-      starts_with("X_"),
-      ~var(.),
-      .names = "Var_{.col}")
+papers <- papers %>%
+mutate(
+    Bin_Y_g_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_g_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_g_5 = as.integer(y_5 > median(y_5)),
+    .by = c(Journal,publication_date,n_author_ordinal),
     ) %>%
-  filter(
-    across(
-      starts_with("Var_"),
-      ~ . > 0)
-  ) -> exact_matched_db
+  mutate(
+    Bin_Y_JouNauth_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_JouNauth_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_JouNauth_5 = as.integer(y_5 > median(y_5)),
+    .by = c(Journal,pub_year,n_author_ordinal),
+    ) %>%
+    mutate(
+    Bin_Y_dateNauth_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_dateNauth_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_dateNauth_5 = as.integer(y_5 > median(y_5)),
+    .by = c(publication_date,n_author_ordinal),
+    ) %>%
+      mutate(
+    Bin_Y_dateJou_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_dateJou_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_dateJou_5 = as.integer(y_5 > median(y_5)),
+    .by = c(publication_date,Journal),
+    ) %>%
+  mutate(
+    Bin_Y_Jou_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_Jou_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_Jou_5 = as.integer(y_5 > median(y_5)),
+    .by = c(Journal,pub_year),
+    ) %>%
+    mutate(
+    Bin_Y_Nauth_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_Nauth_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_Nauth_5 = as.integer(y_5 > median(y_5)),
+    .by = c(n_author_ordinal,pub_year),
+    ) %>%
+      mutate(
+    Bin_Y_date_1 = as.integer(y_1 > median(y_1)),
+    Bin_Y_date_3 = as.integer(y_3 > median(y_3)),
+    Bin_Y_date_5 = as.integer(y_5 > median(y_5)),
+    .by = c(publication_date),
+    )
 ```
 
-#### Functions
+### Functions: Loglinear
 
 ```{r}
-qpois <- function(formula, data, ...) {
-  formula <- paste(formula, "| g") %>% as.formula()
+models$qpois_pool <- function(formula, data, ...) {
+  formula <- paste(formula) %>% as.formula()
   fixest::feglm(data = data,
                 family = quasipoisson,
            fml = formula)}
 
-negbin <- function(formula, data, ...) {
-  formula <- paste(formula, "| g") %>% as.formula()
+models$qpois_fe <- function(formula, data, ...) {
+  formula <- paste(formula, "| Journal") %>% as.formula()
+  fixest::feglm(data = data,
+                family = quasipoisson,
+           fml = formula)}
+
+models$negbin_pool <- function(formula, data, ...) {
+  formula <- paste(formula) %>% as.formula()
   fixest::fenegbin(data = data,
            fml = formula)}
 
-logit <- function(formula, data, ...) {
-  formula <- paste(formula, "| g") %>% as.formula()
+models$negbin_fe <- function(formula, data, ...) {
+  formula <- paste(formula, "| Journal") %>% as.formula()
+  fixest::fenegbin(data = data,
+           fml = formula)}
+
+```
+
+### Functions: binomial
+
+```{r}
+models$logit <- function(formula, data, ...) {
+  formula <- paste(formula) %>% as.formula()
   fixest::feglm(data = data,
                 family = binomial(link = "logit"),
            fml = formula)}
 
-probit <- function(formula, data, ...) {
-  formula <- paste(formula, "| g") %>% as.formula()
+models$probit <- function(formula, data, ...) {
+  formula <- paste(formula) %>% as.formula()
   fixest::feglm(data = data,
                 family = binomial(link = "probit"),
            fml = formula)}
 ```
 
-#### Loglinear Multiverse
+### Loglinear Multiverses
 
 ```{r}
-specr::setup(exact_matched_db %>%
-               mutate(across(starts_with("X_"),
-                             ~ scale(.)
-                             ))
-               ,
-             x = exact_matched_db[3:20] %>% names(),
-  y = c("y_1","y_3","y_5"),
-  model = c("qpois","negbin"),
+specr::setup(papers,
+             x = papers %>%
+  select(starts_with("X_")) %>%
+  names(),
+             y = c("y_1","y_3","y_5"),
+             model = models[1:4],
+  controls = c("n_author_ordinal","extratime"),
+  subsets = list(pub_year = c(2013,2015,2017))
+             ) %>%
+  specr() %>%
+  as_tibble() %>%
+  select(-c(model_function,formula,subsets,term)) %>%
+  rename(year = pub_year) %>%
+  filter(!year %>% is.na()) -> results$loglin
+
+results$loglin %>%
+  filter(Meas. %>% str_detect("Delta")) %>%
+  summarise(
+    beta = median(estimate),
+    .by = year
+  )
+
+results$loglin %>%
+  filter(Meas. %>% str_detect("Phi")) %>%
+  summarise(
+    beta = median(estimate),
+    .by = c(year,Alt.)
+  )
+```
+
+### Binary Multiverse
+
+```{r}
+specr::setup(papers,
+             x = papers %>%
+  select(starts_with("X_")) %>%
+  names(),
+             y = papers %>%
+  select(starts_with("Bin_Y")) %>%
+  names(),
+  model = models[5:6],
   subsets = list(
                pub_year = c(2013,2015,2017)
                )
              ) %>%
   specr() %>%
-  as_tibble() -> results
+  as_tibble() %>%
+  select(-c(model_function,formula,subsets,term)) %>%
+  rename(year = pub_year) %>%
+  filter(!year %>% is.na()) -> results$binomial
 ```
 
-### Visual
-
-#### Visual 1
+### Postprocess
 
 ```{r}
-results %>%
-  filter(subsets != "all") %>%
-  mutate(x =
-           str_replace_all(x,"phi_e","Phi-e") %>%
-           str_replace_all("phi_y","Phi-y") %>%
-           str_replace_all("Div","Delta") %>%
-           str_remove("X_"),
-         Lag = recode(y,
+results$loglin %>%
+  mutate(
+        N_a = controls %>% str_detect("n_author_ordinal") %>% as.integer(),
+        t = controls %>% str_detect("extratime") %>% as.integer(),
+    model = as.character(model),
+    FE = case_when(
+             model %>% str_detect("Journal") ~ 1,
+             TRUE ~ 0
+           ),
+    model =
+           case_when(
+             model %>% str_detect("poisson") ~ "QP",
+             model %>% str_detect("negbin") ~ "NB",
+           ),
+    x =
+      str_replace(x,"Div","Delta") %>%
+      str_replace("phi","Phi") %>%
+      str_remove("X_"),
+    Lag = recode(y,
                       y_1 = "1 year",
                       y_3 = "3 years",
                       y_5 = "5 years"
-         )
-         ) %>%
+         )) %>%
   separate(x,
-           into = c("Measure", "Matrix", "Granul."),
+           into = c("Meas.","Alt.","Z", "Granul."),
            sep = "_") %>%
-  rename(link = model,
-         year = pub_year) -> results_filtered_loglin
+    mutate(
+    Z = Z %>%
+      recode(Raw = "Cosine",
+             Correct = "RCA",
+             Naive = "Naive") %>% factor(levels = c("Naive","Cosine","RCA")),
+    ) -> results$loglin
 
-results_filtered_loglin %>%
-  specr::plot_choices(
-    choices = c("Lag","year")
-  )
+```
 
-results_filtered_loglin %>%
+```{r}
+results$binom %>%
+  mutate(
+    model = as.character(model),
+    Cluster. =
+      case_when(
+        y %>% str_detect("_g_") ~ "7 - All",
+        y %>% str_detect("_dateNauth_") ~ "6 - N_a & Date",
+        y %>% str_detect("_JouNauth_") ~ "5 N_a & Journal",
+        y %>% str_detect("_dateJou_") ~ "4 Date & Journal",
+        y %>% str_detect("_Nauth_") ~ "3 N_a only",
+        y %>% str_detect("_Jou_") ~ "2 Journal only",
+        y %>% str_detect("_date_") ~ "1 Date only"
+      ),
+    link =
+           case_when(
+             model %>% str_detect("logit") ~ "Logit",
+             model %>% str_detect("probit") ~ "Probit",
+           ),
+    x =
+      str_replace(x,"Div","Delta") %>%
+      str_replace("phi","Phi") %>%
+      str_remove("X_"),
+    Lag = case_when(y %>% str_ends("_1") ~ "1 year",
+                    y %>% str_ends("_3") ~ "3 year",
+                    y %>% str_ends("_5") ~ "5 year"
+         )
+    ) %>%
+  separate(x,
+           into = c("Meas.","Alt.","Z", "Granul."),
+           sep = "_") %>%
+    mutate(
+    Z = Z %>%
+      recode(Raw = "Cosine",
+             Correct = "RCA",
+             Naive = "Naive") %>% factor(levels = c("Naive","Cosine","RCA"))
+    ) -> results$binomial
+```
+
+### Visuals
+
+#### Curves
+
+```{r}
+plot_grid(
+results$loglin %>%
+  filter(Meas. %>% str_detect("Delta")) %>%
+    specr::plot_curve(null = 0) +
+  ylab(expression(beta[Delta]))+
+  xlab(expression(rank(beta[Delta]))) +
+  theme_test(base_size = 18) +
+  theme(axis.title.y = element_text(angle = 0)),
+results$loglin %>%
+  filter(Meas. %>% str_detect("Phi")) %>%
+  specr::plot_curve(null = 0) +
+  ylab(expression(beta[Phi]))+
+  xlab(expression(rank(beta[Phi]))) +
+  theme_test(base_size = 18) +
+  theme(axis.title.y = element_text(angle = 0)),
+nrow = 2
+)
+
+ggsave("curves.png")
+```
+
+```{r}
+plot_grid(
+results$binomial %>%
+  filter(Meas. %>% str_detect("Delta")) %>%
+    specr::plot_curve(null = 0) +
+  ylab(expression(beta[Delta]))+
+  xlab(expression(rank(beta[Delta]))) +
+  theme_test(base_size = 18) +
+  theme(axis.title.y = element_text(angle = 0)),
+results$loglin %>%
+  filter(Meas. %>% str_detect("Phi")) %>%
+  specr::plot_curve(null = 0) +
+  ylab(expression(beta[Phi]))+
+  xlab(expression(rank(beta[Phi]))) +
+  theme_test(base_size = 18) +
+  theme(axis.title.y = element_text(angle = 0)),
+nrow = 2
+)
+
+ggsave("curves2.png")
+```
+
+#### Loglin Delta
+
+```{r}
+results$loglin %>%
+  filter(Meas. %>% str_detect("Delta")) %>%
+    mutate(Measure =
+           case_when(
+             (Alt. == "k") & (Z == "Naive") ~ "1 Variety",
+             (Alt. == "k") & (Z == "Cosine") ~ "2 Cos - Disparity",
+             (Alt. == "k") & (Z == "RCA") ~ "3 RCA - Disparity",
+             (Alt. == "Bal") & (Z == "Naive") ~ "4 Balance",
+             (Alt. == "Bal") & (Z == "Cosine") ~ "5 Cos - Integration",
+             (Alt. == "Bal") & (Z == "RCA") ~ "6 RCA - Integration")) %>%
+             arrange(Measure) %>%
   specr::plot_choices(
-    choices = c("Measure","Matrix","Granul.","link")
-  )
+    choices  = c("Measure","Granul.","year","Lag",
+                 "model","N_a","t","FE")) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        strip.text = element_text(size = 16),
+        axis.text.y = element_text(size = 14))
+
+ggsave("MultiDiv.png", height = 9)
+```
+
+#### Loglin Phi
+
+```{r}
+results$loglin %>%
+  filter(Meas. %>% str_detect("Phi")) %>%
+    mutate(Measure =
+           case_when(
+             (Alt. == "e") & (Z == "Naive") ~ "1 Naive - Global",
+             (Alt. == "e") & (Z == "Cosine") ~ "2 Cos - Global",
+             (Alt. == "e") & (Z == "RCA") ~ "3 RCA - Global",
+             (Alt. == "year") & (Z == "Naive") ~ "4 Naive - Local",
+             (Alt. == "year") & (Z == "Cosine") ~ "5 Cos - Local",
+             (Alt. == "year") & (Z == "RCA") ~ "6 RCA - Local")) %>%
+             arrange(Measure) %>%
+  specr::plot_choices(
+    choices  = c("Measure","Granul.","year","Lag",
+                 "model","N_a","t","FE")) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        strip.text = element_text(size = 16),
+        axis.text.y = element_text(size = 14))
+
+ggsave("MultiPhi.png", height = 9)
+```
+
+#### Binom Delta
+
+```{r}
+results$binom %>%
+  filter(Meas. %>% str_detect("Delta")) %>%
+  specr::plot_choices(
+    choices  = c("Cluster.","Granul.","year","Lag",
+                 "link")) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        strip.text = element_text(size = 16),
+        axis.text.y = element_text(size = 14))
+
+ggsave("MultiDiv2.png", height = 9)
+```
+
+#### Binom Phi
+
+```{r}
+results$binom %>%
+  filter(Meas. %>% str_detect("Phi")) %>%
+  specr::plot_choices(
+    choices  = c("Cluster.","Granul.","year","Lag",
+                 "link")) +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        strip.text = element_text(size = 16),
+        axis.text.y = element_text(size = 14))
+
+ggsave("MultiPhi2.png", height = 9)
 ```
 
 ## Extension
@@ -959,4 +1299,79 @@ papers$Math. %>% cor(papers$y_5, method = "kendall")
 papers$`Comp. Sci.` %>% cor(papers$y_1, method = "kendall")
 papers$`Comp. Sci.` %>% cor(papers$y_3, method = "kendall")
 papers$`Comp. Sci.` %>% cor(papers$y_5, method = "kendall")
+```
+
+```{r}
+results$loglin %>%
+  filter(
+    Z %in% c("RCA","Cosine"),
+    Alt. %in% c("e","Bal"),
+    Lag == "5 years",
+    N_a == 1,
+    FE == 0,
+    t == 0
+      ) %>%
+    mutate(
+      estimate =
+      case_when(
+        Meas. == "Delta" ~ exp(estimate)-1,
+        Meas. == "Phi" ~ plogis(estimate)
+    )) %>%
+  ggplot() +
+  geom_density(aes(estimate)) +
+  facet_wrap(Granul.~Meas.) +
+  theme_linedraw()
+
+results$loglin %>%
+  filter(
+    Granul. == 1,
+    Meas. == "Delta",
+    Z %in% c("RCA","Cosine"),
+    Alt. %in% c("e","Bal"),
+    Lag == "5 years",
+    N_a == 1,
+    FE == 0,
+    t == 0
+  ) %>%
+  ggplot() +
+  geom_density(aes(estimate)) +
+  theme_linedraw()
+```
+
+```{r}
+papers %>%
+  select(starts_with("X_")) %>%
+  rename_all(~ str_remove(., "X_")) %>%
+  rename(PHGCOS0 = phi_e_Raw_0 ,
+         PHGCOS1 = phi_e_Raw_1 ,
+         PHLCOS_0 = phi_year_Raw_0 ,
+         PHLCOS1 = phi_year_Raw_1 ,
+         PHGN0 = phi_e_Naive_0 ,
+         PHGN1 = phi_e_Naive_1 ,
+         PHLN0 = phi_year_Naive_0 ,
+         PHLN1 = phi_year_Naive_1 ,
+         PHGRCA0 = phi_e_Correct_0 ,
+         PHGRCA1 = phi_e_Correct_1 ,
+         PHLRCA_0 = phi_year_Correct_0 ,
+         PHLRCA_1 = phi_year_Correct_1 ,
+         Disp.COS0 = Div_k_Raw_0 ,
+         Disp.COS1 = Div_k_Raw_1 ,
+         Intg..COS0 = Div_Bal_Raw_0 ,
+         Intg.COS1= Div_Bal_Raw_1 ,
+         Vart.0 = Div_k_Naive_0 ,
+         Vart.1 = Div_k_Naive_1 ,
+         Bal.0 = Div_Bal_Naive_0 ,
+         Bal.1 = Div_Bal_Naive_1 ,
+         Disp._RCA_0 = Div_k_Correct_0 ,
+         Disp._RCA_1 = Div_k_Correct_1 ,
+         Intg._RCA_0 = Div_Bal_Correct_0 ,
+         Intg._RCA_1 = Div_Bal_Correct_1 ,
+         ) %>%
+  select(ends_with("0")) %>%
+  princomp(scale = TRUE) %>%
+  fviz_pca_var(repel = TRUE,
+               axes = c(1,2),
+                  geom = "text")
+  
+  ggsave("prova.png")
 ```
