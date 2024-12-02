@@ -1129,15 +1129,15 @@ plot_grid(
 results$loglin %>%
   filter(Meas. %>% str_detect("Delta")) %>%
     specr::plot_curve(null = 0) +
-  ylab(expression(beta[Delta]))+
-  xlab(expression(rank(beta[Delta]))) +
+  ylab(expression(b[Delta]))+
+  xlab(expression(rank(b[Delta]))) +
   theme_test(base_size = 18) +
   theme(axis.title.y = element_text(angle = 0)),
 results$loglin %>%
   filter(Meas. %>% str_detect("Phi")) %>%
   specr::plot_curve(null = 0) +
-  ylab(expression(beta[Phi]))+
-  xlab(expression(rank(beta[Phi]))) +
+  ylab(expression(b[Phi]))+
+  xlab(expression(rank(b[Phi]))) +
   theme_test(base_size = 18) +
   theme(axis.title.y = element_text(angle = 0)),
 nrow = 2
@@ -1228,9 +1228,18 @@ ggsave("MultiPhi.png", height = 9)
 ```{r}
 results$binom %>%
   filter(Meas. %>% str_detect("Delta")) %>%
+    mutate(Measure =
+           case_when(
+             (Alt. == "k") & (Z == "Naive") ~ "1 Variety",
+             (Alt. == "k") & (Z == "Cosine") ~ "2 Cos - Disparity",
+             (Alt. == "k") & (Z == "RCA") ~ "3 RCA - Disparity",
+             (Alt. == "Bal") & (Z == "Naive") ~ "4 Balance",
+             (Alt. == "Bal") & (Z == "Cosine") ~ "5 Cos - Integration",
+             (Alt. == "Bal") & (Z == "RCA") ~ "6 RCA - Integration")) %>%
+             arrange(Measure) %>%
   specr::plot_choices(
-    choices  = c("Cluster.","Granul.","year","Lag",
-                 "link")) +
+    choices  = c("Measure","Granul.","year","Lag",
+                 "link","Cluster.")) +
   theme(axis.title.x=element_blank(),
         axis.text.x=element_blank(),
         axis.ticks.x=element_blank(),
@@ -1245,9 +1254,18 @@ ggsave("MultiDiv2.png", height = 9)
 ```{r}
 results$binom %>%
   filter(Meas. %>% str_detect("Phi")) %>%
+      mutate(Measure =
+           case_when(
+             (Alt. == "e") & (Z == "Naive") ~ "1 Naive - Global",
+             (Alt. == "e") & (Z == "Cosine") ~ "2 Cos - Global",
+             (Alt. == "e") & (Z == "RCA") ~ "3 RCA - Global",
+             (Alt. == "year") & (Z == "Naive") ~ "4 Naive - Local",
+             (Alt. == "year") & (Z == "Cosine") ~ "5 Cos - Local",
+             (Alt. == "year") & (Z == "RCA") ~ "6 RCA - Local")) %>%
+             arrange(Measure) %>%
   specr::plot_choices(
-    choices  = c("Cluster.","Granul.","year","Lag",
-                 "link")) +
+    choices  = c("Measure","Granul.","year","Lag",
+                 "link","Cluster.")) +
   theme(axis.title.x=element_blank(),
         axis.text.x=element_blank(),
         axis.ticks.x=element_blank(),

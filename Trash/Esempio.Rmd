@@ -1,0 +1,52 @@
+---
+title: "Esempio"
+author: 'Giulio G: Cantone'
+date: "2023-10-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+pacman::p_load(tidyverse)
+```
+
+Observed
+
+```{r}
+tibble(
+  id = c(1:8),
+  g = rep(c("A","B"),4),
+  v1 = rnorm(8),
+  v2 = rnorm(8),
+  v3 = rnorm(8)
+) -> obs
+```
+
+Ideal
+
+```{r}
+obs %>%
+  mutate(cluster = sample(c(1:2),replace = F) %>% rep(2),
+         .by = g) %>%
+  mutate(pair = str_c(g,cluster)) %>%
+  arrange(pair)
+```
+
+
+Among all combinations of pairs, it should be selected one which sufficiently minimises multivariate distances in Vars, e.g. Mahalanobis is minimised.
+
+Spare elements can be left unpaired
+
+```{r}
+obs %>%
+  mutate(cluster = 
+           knn1(
+             train = select(., starts_with("v")), 
+             test = select(., starts_with("v")),
+             cl = NULL
+           )
+  )
+
+?knn1
+
+```
+
