@@ -2,6 +2,7 @@ pacman::p_load(
   tidyverse,readxl,writexl,ineq
 )
 source("short_names.R")
+source("journals_preprocess.R")
 
 IDR_measures <- function(p_source, e_source, prefix, simil_m) {
   p_source |>
@@ -55,7 +56,7 @@ IDR_measures <- function(p_source, e_source, prefix, simil_m) {
            j = i.y, e_j = e.y) |>
     left_join(
       relationship = "many-to-many",
-      readxl::read_xlsx("Similarity_matrices/Concepts_Ochiai_similarity.xlsx")) |>
+      readxl::read_xlsx(simil_m)) |>
     transmute(journal,i,e_i,j,z,
               phie_i = e_i * z) |>
     summarise(phie_i = sum(phie_i),

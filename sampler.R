@@ -74,12 +74,16 @@ filter(!author %>% is.na(),
   ) %>%
   arrange(publication_date) %>%
   filter(title %>% str_detect("erratum", negate = T),
-         title %>% str_detect("editor", negate = T),
+         title %>% str_detect("editor|edited", negate = T),
+         title %>% str_detect("press,", negate = T),
+         title %>% str_detect("\\(ed| eds", negate = T),
+         title %>% str_detect(" pp", negate = T),
          title %>% str_detect("corrige", negate = T),
          title %>% str_detect("publisher correction", negate = T),
          title %>% str_detect("book review", negate = T),
-         title %>% str_detect("isbn", negate = T)
+         title %>% str_detect("isbn|hardcover|hardback|paperback|handbook", negate = T)
   ) %>%
+  mutate(refs_count = map_int(refs, length)) |>
   distinct(title, .keep_all = T) -> papers
 
 papers |>

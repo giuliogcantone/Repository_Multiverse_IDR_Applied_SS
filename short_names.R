@@ -17,15 +17,17 @@ abbreviations_Scopus <- function(x,i) {
           "Arts and Humanities" ~ "ARTHUM",
           "Biochemistry, Genetics and Molecular Biology" ~ "BIOCHEM",
           "Business, Management and Accounting" ~ "BUSIN",
-          "Chemical Engineering" ~ "CHEMENG" ,
+          "Chemical Engineering" ~ "CHEMENG",
           "Chemistry" ~ "CHEM",
           "Computer Science" ~ "COMP",
           "Decision Sciences" ~ "DECISION",
+          "Dentistry" ~ "DENTIST",
           "Earth and Planetary Sciences" ~ "EARTH",
           "Economics, Econometrics and Finance" ~ "ECON",
           "Energy" ~ "ENERG",
           "Engineering" ~ "ENGIN",
           "Environmental Science" ~ "ENVIR",
+          "Health Professions" ~ "HEALPRO",
           "Immunology and Microbiology" ~ "MICROBIO",
           "Materials Science" ~ "MATERIALS",
           "Mathematics" ~ "MATH",
@@ -36,9 +38,7 @@ abbreviations_Scopus <- function(x,i) {
           "Physics and Astronomy" ~ "PHYS",
           "Psychology" ~ "PSHYC",
           "Social Sciences" ~ "SOCIOL",
-          "Veterinary" ~ "VETERIN",
-          "Dentistry" ~ "DENTIST",
-          "Health Professions" ~ "HEALPRO"
+          "Veterinary" ~ "VETERIN"
         )
     )
 }
@@ -83,26 +83,26 @@ abbreviations_WoS <- function(x, i) {
       !!column_sym :=
         case_match(
           !!column_sym,
-          "Materials Science" ~ "MATERIALS",
+          "Agricultural Sciences" ~ "AGRIC",
+          "Arts & Humanities, Interdisciplinary" ~ "ARTHUM",
           "Biology & Biochemistry" ~ "BIO",
-          "Engineering" ~ "ENGIN",
-          "Economics & Business" ~ "ECON",
-          "Mathematics" ~ "MATH",
-          "Geosciences" ~ "EARTH",
           "Chemistry" ~ "CHEM",
           "Clinical Medicine" ~ "MEDIC",
           "Computer Science" ~ "COMP",
-          "Physics" ~ "PHYS",
-          "Social Sciences, General" ~ "SOCIOL",
-          "Philosophy & Religion" ~ "PHILO",
-          "Visual & Performing Arts" ~ "VISART",
+          "Economics & Business" ~ "ECBUS",
+          "Engineering" ~ "ENGIN",
           "Environment/Ecology" ~ "ENVIRON",
-          "Plant & Animal Science" ~ "PLANTANIM",
-          "Agricultural Sciences" ~ "AGRIC",
-          "Psychiatry/Psychology" ~ "PSYCH",
-          "Arts & Humanities, Interdisciplinary" ~ "ARTHUM",
+          "Geosciences" ~ "EARTH",
           "History & Archaeology" ~ "HIST",
-          "Literature & Language" ~ "LANG"
+          "Literature & Language" ~ "LANG",
+          "Materials Science" ~ "MATERIALS",
+          "Mathematics" ~ "MATH",
+          "Philosophy & Religion" ~ "PHILO",
+          "Physics" ~ "PHYS",
+          "Plant & Animal Science" ~ "PLANTANIM",
+          "Psychiatry/Psychology" ~ "PSYCH",
+          "Social Sciences, General" ~ "SOCIOL",
+          "Visual & Performing Arts" ~ "VISART"
         )
     )
 }

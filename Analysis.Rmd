@@ -1,0 +1,171 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+pacman::p_load(
+  tidyverse,broom,data.table,specr,data.table
+)
+source("models.R")
+```
+
+```{r}
+fread("db_analysis.csv") -> db
+```
+
+```{r}
+db %>%
+   mutate(y_3 = coalesce(y_3,0),
+         y_5 = coalesce(y_5,0)) |>
+  select(-c(Y_5,Y_3)) |>
+  filter(if_any(everything(), is.na)) |> View()
+```
+
+https://openalex.org/W2794369353
+
+```{r}
+db |>
+  mutate(y_3 = coalesce(y_3,0),
+         y_5 = coalesce(y_5,0)) %>%
+  group_by(journal) |>
+  dplyr::mutate(dplyr::across(
+    .cols = dplyr::matches("^Sem_|^Cog_"),
+    .fns = ~ as.numeric(scale(.))
+  )) %>%
+  ungroup()
+```
+
+
+
+```{r}
+db |>
+  mutate(y_3 = coalesce(y_3,0),
+         y_5 = coalesce(y_5,0)) %>%
+  group_by(journal) |>
+  dplyr::mutate(dplyr::across(
+    .cols = dplyr::matches("^Sem_|^Cog_"),
+    .fns = ~ as.numeric(scale(.))
+  )) %>%
+  ungroup() %>%
+specr::setup(
+  data = .,
+  y = c("y_3","y_5"),
+  x = db %>%
+    dplyr::select(starts_with("Sem_") | starts_with("Cog_")) %>%
+    names(),
+  model = c("negbin_noFE")
+) |>
+  specr::specr() |>
+  as_tibble() -> negbin_multiverse
+
+```
+
+
+```{r}
+db |>
+  dplyr::mutate(dplyr::across(
+    .cols = dplyr::matches("^Sem_|^Cog_"),
+    .fns = ~ as.numeric(scale(.))
+  )) %>%
+specr::setup(
+  data = .,
+  y = c("Y_3","Y_5"),
+  x = db %>%
+    dplyr::select(starts_with("Sem_") | starts_with("Cog_")) %>%
+    names(),
+  model = "logistic_binom"
+) |>
+  specr::specr() |>
+  as_tibble() -> logit_multiverse
+
+```
+
+```{r}
+logit_multiverse |>
+  mutate(
+    paradigm =
+      case_when(
+        formula |> str_detect("Sem_") ~ "Semantic",
+        formula |> str_detect("Cog_") ~ "Cognitive",
+      )) -> multiverse
+
+multiverse
+  ggplot() +
+  geom_density(aes(x = estimate)) +
+    geom_vline(color = "purple", xintercept = 0) +
+  theme_test()
+  
+```
+
+
+```{r}
+negbin_multiverse |>
+  mutate(
+    paradigm =
+      case_when(
+        formula |> str_detect("Sem_") ~ "Semantic",
+        formula |> str_detect("Cog_") ~ "Cognitive",
+      )) -> multiverse
+
+multiverse |>
+  ggplot() +
+  geom_density(aes(x = estimate,
+                   color = paradigm)) +
+  geom_vline(color = "red",
+             xintercept = multiverse |>
+               filter(paradigm == "Concepts") |>
+               pull(estimate) |> median(),) +
+  geom_vline(color = "blue",
+             xintercept = multiverse |>
+               filter(paradigm == "Other") |>
+               pull(estimate) |> median(),) +  
+    geom_vline(color = "purple", xintercept = 0) +
+  theme_test()
+8```
+
+```{r}
+multiverse |>
+  mutate(
+    paradigm =
+      case_when(
+        x |> str_detect("Concepts") ~ "Concepts",
+        !str_detect(x, "Concepts") ~ "Other",
+      )) -> multiverse
+
+multiverse |>
+  ggplot() +
+  geom_density(aes(x = estimate,
+                   color = paradigm)) +
+  geom_vline(color = "red",
+             xintercept = multiverse |>
+               filter(paradigm == "Concepts") |>
+               pull(estimate) |> median(),) +
+  geom_vline(color = "blue",
+             xintercept = multiverse |>
+               filter(paradigm == "Other") |>
+               pull(estimate) |> median(),) +  
+    geom_vline(color = "purple", xintercept = 0) +
+  theme_test()
+
+
+multiverse |> View()
+```
+
+```{r}
+multiverse |>
+  ggplot() +
+  geom_density(aes(x = estimate,
+                   color = y)) +
+  geom_vline(color = "red",
+             xintercept = multiverse |>
+               filter(y == "y_3") |>
+               pull(estimate) |> median(),) +
+  geom_vline(color = "blue",
+             xintercept = multiverse |>
+               filter(y == "y_5") |>
+               pull(estimate) |> median(),) +  
+    geom_vline(color = "purple", xintercept = 0) +
+  theme_test()
+```
+
