@@ -1,0 +1,95 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+pacman::p_load(tidyverse)
+```
+
+```{r}
+read_xlsx("Results/Descriptives/pies.xlsx")
+    mutate(
+    class2 =
+      case_when(
+        i %in% c("ECON","ECBUS","BUSIN") ~ i,
+        i %in% c("SOCIOL","LAWPOL", "PSYCH", "GEOGR","HIST","PHILO","PHIL") ~ "SOCHUM",
+        TRUE ~ "OTHER"
+      ) |>
+      factor(levels = c("BUSIN", "ECBUS", "ECON", "SOCHUM", "OTHER")),
+    Taxonomy =
+      Taxonomy |> factor(levels = c("JCR","Scopus","Concepts","Topics")),
+    Sample =
+      Sample |> factor(levels = c("Articles","Journals"))
+  ) |>
+  filter(Taxonomy == "Concepts",
+         Sample == "Journals",
+         Cluster == "MGMT",
+         class2 == "OTHER") |>
+  arrange(-p)
+
+
+```
+
+
+```{r}
+read_xlsx("Results/Descriptives/pies.xlsx") |>
+  mutate(
+    Cluster = factor(Cluster,
+                     levels = c("MGMT",
+                                "FINAC",
+                                "MKTG")),
+    class =
+      case_when(
+        i %in% c("ECON","ECBUS","BUSIN") ~ i,
+        i %in% c("SOCIOL","LAWPOL", "PSYCH", "GEOGR","HIST","PHILO","PHIL") ~ "SOCHUM",
+        TRUE ~ "OTHER"
+      ) |>
+      factor(levels = c("BUSIN", "ECBUS", "ECON", "SOCHUM", "OTHER")),
+    Taxonomy =
+      Taxonomy |> factor(levels = c("JCR","Scopus","Concepts","Topics")),
+    Sample =
+      Sample |> factor(levels = c("Articles","Journals"))
+  ) |>
+  summarise(
+    p = sum(p) |> round(3),
+    .by = c(class,Taxonomy,Sample,Cluster)
+  ) |>
+  mutate(
+    p_ch = paste0(p*100,"%"),
+    color_class =
+      case_when(
+        class == "ECON" ~ "yellow",
+        class == "ECBUS" ~ "green", 
+        class == "BUSIN" ~ "cyan",
+        class == "SOCHUM" ~ "pink",
+        class == "OTHER" ~ "grey",
+      )
+  ) -> pies
+```
+
+
+```{r}
+pies |> 
+  ggplot(aes(x = "", y = p, fill = class)) + 
+  geom_bar(stat = "identity", width = 1, color = "black") + 
+  coord_polar("y", direction = -1) + 
+  facet_grid(Cluster+Sample~Taxonomy, switch = "y") +
+  geom_text(aes(label = p_ch), 
+            position = position_stack(vjust = .5), 
+            color = "brown",
+            size = 3.5,
+            fontface = "bold") +
+  scale_fill_manual(values = setNames(unique(pies$color_class),
+                                      unique(pies$class))) +
+  theme_minimal() +
+  theme(axis.text = element_blank(), 
+        axis.title = element_blank(), 
+        panel.grid = element_blank(),
+        strip.text = element_text(size = 18),
+        legend.position = "bottom",
+        legend.title = element_blank())
+
+ggsave("Results/Descriptives/artpie.png",height = 11,width = 7)
+```
+

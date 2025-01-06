@@ -1,0 +1,248 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+pacman::p_load(
+  tidyverse,broom,specr,gridExtra,effectsize,data.table
+)
+```
+
+```{r}
+source("Utilities/models.R")
+
+data.table::fread("db_analysis.csv") |>
+  dplyr::select(starts_with("Concept") | starts_with("Topic") |
+                  starts_with("Scopus") | starts_with("JCR")) %>%
+    names() -> Xlist
+```
+
+Pre-Analysis
+
+```{r}
+data.table::fread("db_analysis.csv") |>
+  select(starts_with(c("Concepts","Topics","JCR","Scopus"))) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Stylisation", "Indicator"),
+    names_sep = "_"
+  ) |>
+  mutate(
+    Indicator = factor(Indicator,
+                       levels = c("k","RR","GINI",
+                                  "LC","LWBR",
+                                  "HEL","HZ")),
+    Stylisation = factor(Stylisation, levels = c(
+        "JCR", "Scopus", "Concepts", "Topics"
+      ))
+    ) |>
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 20, fill = "blue", color = "black", alpha = 0.5) +
+  facet_grid(Stylisation ~ Indicator,
+             scales = "free",
+             switch = "y") +
+  scale_y_continuous(
+    labels = function(x) format(x / 1000, nsmall = 1)
+    ) +
+ scale_x_continuous(breaks = function(x) pretty(x, n = 3)) +
+  labs(element_blank()) +
+  theme_test() +
+  theme(
+    plot.title = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 7),
+    strip.text.x = element_text(size = 10, face = "bold"),
+    strip.text.y = element_text(size = 10, face = "bold"),
+    strip.background.x = element_blank(),
+    strip.background.y = element_blank(),
+    strip.placement = "outside",
+  )
+  
+```
+
+
+Multiverse fit
+
+```{r}
+
+data.table::fread("db_analysis.csv") |> #1
+  dplyr::mutate(dplyr::across(
+    .cols = dplyr::matches("^Concepts_|^Topics_|^Scopus|^JCR_"),
+    .fns = ~ as.numeric(scale(.))
+  )) %>%
+specr::setup(
+  data = .,
+  y = c("y_3","y_5"),
+  x = Xlist,
+  controls = c("log(n_authors)"),
+  model = c("negbin_noFE"),
+  subsets = list(pub_year = c(2013,2018),
+                 Cluster = c("MKTG",
+                             "FINAC",
+                             "MGMT"))
+  )|>
+  specr::specr() |>
+  as_tibble() |>
+  mutate(
+    FE = 0
+  ) |> clean_multiverse() |>
+  add_row(
+    data.table::fread("db_analysis.csv") |> #2
+  dplyr::mutate(dplyr::across(
+    .cols = dplyr::matches("^Concepts_|^Topics_|^Scopus|^JCR_"),
+    .fns = ~ as.numeric(scale(.))
+  )) %>%
+specr::setup(
+  data = .,
+  y = c("y_3","y_5"),
+  x = Xlist,
+  model = c("negbin_FE"),
+  controls = c("log(n_authors)"),
+  subsets = list(pub_year = c(2013,2018),
+                 Cluster = c("MKTG",
+                             "FINAC",
+                             "MGMT"))
+) |>
+  specr::specr() |>
+  as_tibble() |>
+  mutate(
+    FE = 1
+  ) |> clean_multiverse()) |>
+    data.table::fwrite("multiverse.csv")
+```
+
+
+```{r}
+data.table::fread("multiverse.csv") |>
+  pull(Impact) |> mean()
+
+bind_rows(
+fread("multiverse.csv") %>%
+  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Year,Cluster)) |>
+  dplyr::rename(Element = Year) |>
+  mutate(Element = Element |> as.character()),
+fread("multiverse.csv") %>%
+  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Lag,Cluster)) |>
+  dplyr::rename(Element = Lag),
+fread("multiverse.csv") %>%
+  summarise(x = mean(Impact, na.rm = TRUE), .by = c(FE,Cluster)) |>
+  dplyr::rename(Element = FE) |>
+  mutate(Element = Element |> as.character() %>% str_c("FE=",.)),
+fread("multiverse.csv") %>%
+  summarise(x = mean(Impact, na.rm = TRUE), .by = c(N_author,Cluster)) |>
+  dplyr::rename(Element = N_author) |>
+  mutate(Element = Element |> as.character() %>% str_c("Nauth=",.)),
+fread("multiverse.csv") %>%
+  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Stylisation,Cluster)) |>
+  dplyr::rename(Element = Stylisation) |>
+  mutate(Element = Element |> as.character()),
+fread("multiverse.csv") %>%
+  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Indicator,Cluster)) |>
+  dplyr::rename(Element = Indicator) |>
+  mutate(Element = Element |> as.character())
+) |>
+  mutate(
+    Cluster = ifelse(Cluster == "","ALL",Cluster),
+    x = x |> round(2)
+  ) |>
+  pivot_wider(
+    names_from = Cluster,
+    values_from = x
+  ) |>
+  select(Element,MGMT,FINAC,MKTG) |>
+  janitor::adorn_rounding(2) |>
+       knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "Caption", linesep = "") |>
+  cat()
+
+```
+
+
+
+```{r}
+omega_fun("Approach + Stylisation + Dimension + Indicator","multiverse.csv","omega_1") |>
+     left_join(
+    omega_fun("Approach + Stylisation + Indicator","multiverse.csv","omega_2")
+  ) |>
+     left_join(
+    omega_fun("Approach + Stylisation + Dimension","multiverse.csv","omega_3")
+  ) |>
+    left_join(
+    omega_fun("Stylisation + Dimension + Indicator","multiverse.csv","omega_4")
+  ) |>
+    left_join(
+    omega_fun("Stylisation + Indicator","multiverse.csv","omega_5")
+  ) |>
+    left_join(
+    omega_fun("Stylisation + Dimension","multiverse.csv","omega_6")
+  ) |>
+    left_join(
+    omega_fun("Approach + Dimension + Indicator","multiverse.csv","omega_7")
+  ) |>
+    left_join(
+    omega_fun("Approach + Indicator","multiverse.csv","omega_8")
+  ) |>
+    left_join(
+    omega_fun("Approach + Dimension","multiverse.csv","omega_9")
+  ) |>
+  janitor::adorn_totals() |>
+  janitor::adorn_rounding(2) |>
+      knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "Concepts", linesep = "") |>
+  cat()
+  
+```
+
+```{r}
+fread("multiverse.csv") |>
+  filter(Cluster != "") |>
+  mutate(
+    Cluster = factor(Cluster,
+                     levels = c("MGMT",
+                                "FINAC",
+                                "MKTG")),
+    Indicator = factor(Indicator,
+                       levels = c("k","RR","GINI",
+                                  "LC","LWBR",
+                                  "HEL","HZ")),
+    Dimension = factor(Dimension, levels = c(
+        "Variety", "Balance", "Integration", "Nonconformity" 
+      )),
+    Year = Year |> as.factor(),
+    FE = factor(FE, levels = c(0,1)),
+    Stylisation = factor(Stylisation, levels = c(
+        "JCR", "Scopus", "Concepts", "Topics"
+      ))
+    ) |>
+  ggplot(aes(x = Impact, y = log(-log(p)))) +
+    geom_vline(xintercept = 0) +
+  geom_hline(yintercept = log(-log(.05)), linetype = 2) +
+  geom_segment(aes(x = L.bound, xend = U.bound, color = Cluster),
+               alpha = .3, size = .7) +
+  geom_point(aes(color = Cluster), size = 2, alpha = 0.6, shape = 22) +
+ facet_grid(Indicator ~ Stylisation, switch = "y") + # Facet switch a sinistra
+#  scale_y_reverse() +
+  theme_test(base_size = 16) +
+   scale_color_manual(
+    values = c(
+      "MGMT" = "limegreen",
+      "FINAC" = "purple",
+      "MKTG" = "goldenrod"),
+    labels = c("MGMT","FINAC","MKTG")
+    ) +
+  ylab(element_blank()) +
+  xlab("Impact of IDR on citations") +
+  theme(
+    panel.grid = element_blank(),
+    strip.text = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    strip.placement = "outside",
+    legend.position = "bottom"
+  )
+
+  ggsave("Results/Main_Analysis/results.png", height = 11, width = 7)
+```
+
+

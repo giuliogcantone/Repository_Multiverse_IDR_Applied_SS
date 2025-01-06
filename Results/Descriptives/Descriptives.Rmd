@@ -1,0 +1,140 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r setup}
+pacman::p_load(
+  tidyverse,cowplot
+)
+```
+
+```{r}
+fread("db_analysis.csv") |>
+  summarise(
+    Cluster = first(Cluster),
+    n_articles = n(),
+    medianY5 = median(y_5),
+    .by = journal
+  ) |>
+  mutate(
+    Cluster = case_match(
+      Cluster,
+      "Management" ~ "MNGT",
+      "Finance and Accounting" ~ "FINAC",
+      "Marketing and Tourism" ~ "MRKG"
+    )
+  ) |>
+  transmute(
+    Cluster = factor(Cluster,
+                     levels = c("MNGT", "FINAC", "MRKG")),
+    journal, n_articles, medianY5 = round(medianY5)
+  ) |>
+  arrange(Cluster, journal) |>
+  knitr::kable(
+    format = "latex", booktabs = TRUE, linesep = ""
+  ) |>
+  cat()
+```
+
+
+```{r}
+fread("db_analysis.csv") |>
+  summarise(r = cor(y_5, y_3, method = "pearson",
+                    use = "complete.obs"),
+            .by = pub_year)
+
+fread("db_analysis.csv") %>%
+t.test(log(y_3+1) ~ pub_year, data =.,
+       alternative = "less") |>
+  tidy()
+
+fread("db_analysis.csv") %>%
+  t.test(log(y_5+1) ~ pub_year, data =.,
+         alternative = "less") |>
+  tidy()
+
+fread("db_analysis.csv") %>%
+  mutate(
+    z_y_3 = (y_3 - mean(y_3, na.rm = TRUE)) / sd(y_3, na.rm = TRUE),
+    z_y_5 = (y_5 - mean(y_5, na.rm = TRUE)) / sd(y_5, na.rm = TRUE),
+    .by = pub_year,
+    difference = z_y_3 - z_y_5
+  ) %>%
+  summarise(
+    t_test_standardized_diff = list(t.test(difference),
+                                    paired =T)
+  ) %>%
+  pull(t_test_standardized_diff) |> View()
+  tidy()
+```
+
+```{r}
+ggdraw(
+fread("db_analysis.csv") %>%
+  select(c("y_3","y_5","pub_year")) %>%
+  pivot_longer(cols = starts_with("y")) %>%
+  ggplot(aes(x = value+1)) +
+  geom_histogram(aes(y = ..count../sum(..count..),
+                     fill = as.character(pub_year)),
+                 bins = 20, color = "black",
+                 alpha = .5,
+                 position = "identity") +
+  scale_x_continuous(
+    trans = 'log10',
+    labels = scales::trans_format("log10", scales::math_format(10^.x))
+  ) +
+  theme_test() +
+  scale_fill_manual(values = c("purple", "goldenrod")) +
+  facet_grid(name~.) +
+  theme(strip.text = element_blank(),
+        axis.title.y = element_text(angle = 0),
+        legend.position = "bottom") +
+  guides(fill = guide_legend(title = "Year")) +
+  ylab(element_blank()) +
+  xlab(expression(log[10]("citations")))) +
+  draw_label("After 3 years", .84, .95) +
+  draw_label("After 5 years", .84, .55)
+```
+
+Correlations
+
+```{r}
+fread("db_analysis.csv") |>
+  select(starts_with(c("Concepts","Topics","JCR","Scopus"))) |>
+  cor(use="complete.obs") |>
+  round(2) |>
+  as_tibble(rownames = "row_names") %>%
+  separate(row_names, into = c("Stylisation", "Indicator"),
+           sep = "_", convert = TRUE) -> corrmatrix
+
+corrmatrix |>
+  select(Stylisation, Indicator, starts_with("JCR")) |> 
+  rename_with(~ sub("JCR_", "", .)) |>
+  knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "JCR") |>
+  cat()
+
+corrmatrix |>
+  select(Stylisation, Indicator, starts_with("Scopus")) |> 
+  rename_with(~ sub("JCR_", "", .)) |>
+  knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "Scopus") |>
+  cat()
+
+corrmatrix |>
+  select(Stylisation, Indicator, starts_with("Topics")) |> 
+  rename_with(~ sub("Topics_", "", .)) |>
+  knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "Topics") |>
+  cat()
+
+corrmatrix |>
+  select(Stylisation, Indicator, starts_with("Concepts")) |> 
+  rename_with(~ sub("Concepts_", "", .)) |>
+  knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "Concepts") |>
+  cat()
+
+```
+
