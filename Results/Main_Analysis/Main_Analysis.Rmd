@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
 output: html_notebook
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup}
@@ -113,53 +115,7 @@ specr::setup(
     data.table::fwrite("multiverse.csv")
 ```
 
-
-```{r}
-data.table::fread("multiverse.csv") |>
-  pull(Impact) |> mean()
-
-bind_rows(
-fread("multiverse.csv") %>%
-  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Year,Cluster)) |>
-  dplyr::rename(Element = Year) |>
-  mutate(Element = Element |> as.character()),
-fread("multiverse.csv") %>%
-  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Lag,Cluster)) |>
-  dplyr::rename(Element = Lag),
-fread("multiverse.csv") %>%
-  summarise(x = mean(Impact, na.rm = TRUE), .by = c(FE,Cluster)) |>
-  dplyr::rename(Element = FE) |>
-  mutate(Element = Element |> as.character() %>% str_c("FE=",.)),
-fread("multiverse.csv") %>%
-  summarise(x = mean(Impact, na.rm = TRUE), .by = c(N_author,Cluster)) |>
-  dplyr::rename(Element = N_author) |>
-  mutate(Element = Element |> as.character() %>% str_c("Nauth=",.)),
-fread("multiverse.csv") %>%
-  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Stylisation,Cluster)) |>
-  dplyr::rename(Element = Stylisation) |>
-  mutate(Element = Element |> as.character()),
-fread("multiverse.csv") %>%
-  summarise(x = mean(Impact, na.rm = TRUE), .by = c(Indicator,Cluster)) |>
-  dplyr::rename(Element = Indicator) |>
-  mutate(Element = Element |> as.character())
-) |>
-  mutate(
-    Cluster = ifelse(Cluster == "","ALL",Cluster),
-    x = x |> round(2)
-  ) |>
-  pivot_wider(
-    names_from = Cluster,
-    values_from = x
-  ) |>
-  select(Element,MGMT,FINAC,MKTG) |>
-  janitor::adorn_rounding(2) |>
-       knitr::kable(
-    format = "latex", booktabs = TRUE, caption = "Caption", linesep = "") |>
-  cat()
-
-```
-
-
+ANOVA
 
 ```{r}
 omega_fun("Approach + Stylisation + Dimension + Indicator","multiverse.csv","omega_1") |>
@@ -194,6 +150,87 @@ omega_fun("Approach + Stylisation + Dimension + Indicator","multiverse.csv","ome
   cat()
   
 ```
+
+Proportions
+
+```{r}
+fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+  summarise(
+    Credibility = mean(p < 0.05 & Impact > 0),
+    .by = c("Cluster","Indicator")
+  ) |>
+  pivot_wider(names_from = Cluster, values_from = Credibility, names_prefix = "Cred_") |>
+  left_join(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+      summarise(
+    Credibility = mean(p < 0.05 & Impact > 0),
+    .by = c("Indicator")
+  )) |>
+  left_join(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+      summarise(
+    pos = sum(Impact > 0 & p < .05)+1,
+    neg = sum(Impact < 0 & p < .05)+1,
+    Verac = log2(pos/neg),
+    .by = c("Cluster","Indicator")) |>
+  select(Indicator, Cluster, Verac) |>
+  pivot_wider(names_from = Cluster, values_from = Verac,
+              names_prefix = "Verac_")) |>
+  left_join(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+  summarise(
+    pos = sum(Impact > 0 & p < .05)+1,
+    neg = sum(Impact < 0 & p < .05)+1,
+    Verac = log2(pos/neg),
+    .by = c("Indicator")) |>
+    select(Indicator,Verac)) |>
+  add_row(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+  summarise(
+    Credibility = mean(p < 0.05 & Impact > 0),
+    .by = c("Cluster")
+  ) |>
+  pivot_wider(names_from = Cluster, values_from = Credibility, names_prefix = "Cred_") |>
+  add_column(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+      summarise(
+    Credibility = mean(p < 0.05 & Impact > 0)
+  )) |>
+  add_column(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+      summarise(
+    pos = sum(Impact > 0 & p < .05)+1,
+    neg = sum(Impact < 0 & p < .05)+1,
+    Verac = log2(pos/neg),
+    .by = c("Cluster")) |>
+  select(Cluster, Verac) |>
+  pivot_wider(names_from = Cluster, values_from = Verac,
+              names_prefix = "Verac_")) |>
+  add_column(
+    fread("multiverse.csv") |>
+    filter(Cluster != "") |>
+  summarise(
+    pos = sum(Impact > 0 & p < .05)+1,
+    neg = sum(Impact < 0 & p < .05)+1,
+    Verac = log2(pos/neg)) |>
+    select(Verac))
+  ) |>
+  janitor::adorn_rounding(2) |>
+  View()
+
+
+  
+        
+```
+
+Comparative View
 
 ```{r}
 fread("multiverse.csv") |>
@@ -245,4 +282,90 @@ fread("multiverse.csv") |>
   ggsave("Results/Main_Analysis/results.png", height = 11, width = 7)
 ```
 
+Median Impacts
 
+```{r}
+data.table::fread("multiverse.csv") |>
+  pull(Impact) |> mean()
+
+bind_rows(
+  fread("multiverse.csv") %>%
+    filter(Cluster != "") %>%
+    summarise(x = median(Impact, na.rm = TRUE), Cluster = "ALL", .by = Year) %>%
+    rename(Element = Year) %>%
+    mutate(Element = as.character(Element)),
+
+  fread("multiverse.csv") %>%
+    filter(Cluster != "") %>%
+    summarise(x = median(Impact, na.rm = TRUE), Cluster = "ALL", .by = Lag) %>%
+    rename(Element = Lag) %>%
+    mutate(Element = as.character(Element)),
+
+  fread("multiverse.csv") %>%
+    filter(Cluster != "") %>%
+    summarise(x = median(Impact, na.rm = TRUE), Cluster = "ALL", .by = FE) %>%
+    rename(Element = FE) %>%
+    mutate(Element = as.character(Element) %>% str_c("FE=",.)),
+
+  fread("multiverse.csv") %>%
+    filter(Cluster != "") %>%
+    summarise(x = median(Impact, na.rm = TRUE), Cluster = "ALL", .by = N_author) %>%
+    rename(Element = N_author) %>%
+    mutate(Element = as.character(Element)  %>% str_c("Nauth=",.)),
+
+  fread("multiverse.csv") %>%
+    filter(Cluster != "") %>%
+    summarise(x = median(Impact, na.rm = TRUE), Cluster = "ALL", .by = Stylisation) %>%
+    rename(Element = Stylisation) %>%
+    mutate(Element = as.character(Element)),
+
+  fread("multiverse.csv") %>%
+    filter(Cluster != "") %>%
+    summarise(x = median(Impact, na.rm = TRUE), Cluster = "ALL", .by = Indicator) %>%
+    rename(Element = Indicator) %>%
+    mutate(Element = as.character(Element))
+) |>
+  add_row(
+bind_rows(
+fread("multiverse.csv") %>%
+  summarise(x = median(Impact, na.rm = TRUE), .by = c(Year,Cluster)) |>
+  dplyr::rename(Element = Year) |>
+  mutate(Element = Element |> as.character()),
+fread("multiverse.csv") %>%
+  summarise(x = median(Impact, na.rm = TRUE), .by = c(Lag,Cluster)) |>
+  dplyr::rename(Element = Lag),
+fread("multiverse.csv") %>%
+  summarise(x = median(Impact, na.rm = TRUE), .by = c(FE,Cluster)) |>
+  dplyr::rename(Element = FE) |>
+  mutate(Element = Element |> as.character() %>% str_c("FE=",.)),
+fread("multiverse.csv") %>%
+  summarise(x = median(Impact, na.rm = TRUE), .by = c(N_author,Cluster)) |>
+  dplyr::rename(Element = N_author) |>
+  mutate(Element = Element |> as.character() %>% str_c("Nauth=",.)),
+fread("multiverse.csv") %>%
+  summarise(x = median(Impact, na.rm = TRUE), .by = c(Stylisation,Cluster)) |>
+  dplyr::rename(Element = Stylisation) |>
+  mutate(Element = Element |> as.character()),
+fread("multiverse.csv") %>%
+  summarise(x = median(Impact, na.rm = TRUE), .by = c(Indicator,Cluster)) |>
+  dplyr::rename(Element = Indicator) |>
+  mutate(Element = Element |> as.character())
+)) |>
+  mutate(
+    Cluster = ifelse(Cluster == "","NO",Cluster),
+    x = x |> round(2)
+  ) |>
+  filter(Cluster != "NO") |>
+  pivot_wider(
+    names_from = Cluster,
+    values_from = x
+  ) |>
+  select(Element,MGMT,FINAC,MKTG, ALL) |>
+  janitor::adorn_rounding(2) |>
+       knitr::kable(
+    format = "latex", booktabs = TRUE, caption = "Caption", linesep = "") |>
+  cat()
+
+      
+
+```
